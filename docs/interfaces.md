@@ -77,6 +77,21 @@ type VirtualizationProvider interface {
 
 - 实现计划：esxi（Phase 4）/ mock / proxmox
 - 领域服务经此接口编排，实现平台可移植
+- 已实现：`internal/adapters/esxi`（govmomi，惰性连接 + 指数退避重试；ID=VM UUID，MOID 存 metadata；`make test-esxi` 用 vcsim 验证）
+- 已实现：`internal/adapters/mock`（内存态模拟器，内置示例数据；`VIRT_PROVIDER=mock` 开发调试）
+
+### 提供者工厂（internal/adapters/virt_factory.go）
+
+```go
+NewVirtualizationProvider(virtType string, config map[string]string) (ports.VirtualizationProvider, error)
+```
+
+| virtType | 配置键 | 说明 |
+|----------|--------|------|
+| `mock`（默认） | 无 | 内存模拟，含 3 台示例 VM |
+| `esxi` | `url`（必填）、`username`、`password`、`insecure` | 连接延迟到首次调用 |
+
+切换方式：`VIRT_PROVIDER=mock` 或 `esxi`（接线在 Phase 5/6 落地，工厂已就绪）。
 
 ## 业务服务（internal/domain/services/vm_service.go）
 

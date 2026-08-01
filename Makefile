@@ -2,7 +2,7 @@
 # 环境要求: Go 1.21+, Node 20+, Docker 24+, GNU Make (Windows需配 sh.exe)
 
 .PHONY: version init init-backend init-frontend run run-backend \
-        test test-unit test-domain test-repo test-sqlite test-integration test-esxi test-auth \
+        test test-unit test-domain test-repo test-virt test-sqlite test-integration test-esxi test-auth \
         test-api test-e2e \
         build build-backend \
         docker-build docker-build-backend docker-build-caddy docker-build-frontend \
@@ -90,13 +90,16 @@ test: test-unit
 LOCALAPPDATA_FS := $(subst \\,/,$(LOCALAPPDATA))
 MINGW_GCC := $(firstword $(wildcard $(LOCALAPPDATA_FS)/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.MCF.UCRT_*/mingw64/bin/gcc.exe))
 
-test-unit: test-domain test-repo test-api
+test-unit: test-domain test-repo test-virt test-api
 
 test-domain:
 	@cd $(BACKEND_DIR) && $(GO) test ./internal/domain/... -cover -count=1
 
 test-repo:
 	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/memory/... ./internal/adapters/gormstore/... -count=1
+
+test-virt:
+	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/mock/... ./internal/adapters/ -count=1
 
 test-race:
 	@cd $(BACKEND_DIR) && CC="$(MINGW_GCC)" $(GO) test -race ./... -count=1

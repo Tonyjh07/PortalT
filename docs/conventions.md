@@ -38,7 +38,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 | `make run` | 启动后端（go run） | ✅ 可用 |
 | `make test-domain` | domain 层单测（覆盖率） | ✅ 通过（100%） |
 | `make test-repo` | 内存 + gormstore 仓储测试（gormstore 用内存SQLite，无需外部服务） | ✅ 通过 |
+| `make test-virt` | Mock 虚拟化提供者 + 工厂测试 | ✅ 通过 |
 | `make test-sqlite` | SQLite 适配器集成测试（临时文件库，无需外部服务） | ✅ 通过 |
+| `make test-esxi` | ESXi 适配器集成测试（vcsim 内置模拟 vCenter，无需真实 ESXi） | ✅ 通过 |
 | `make test-race` | 全部单测 + 竞态检测（需 MinGW） | ✅ 通过 |
 | `make test-integration` | 全部适配器集成测试（SQLite 免服务；PostgreSQL 需 `docker compose up -d postgres`） | ✅ 通过 |
 | `make test` | 汇总测试（test-domain + test-repo + test-api） | ⏳ 依赖后续阶段 |
@@ -64,6 +66,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 - `internal/adapters/gormstore`：**方言无关**的 GORM 模型与仓储（postgres/sqlite 共用，单一事实来源）
 - `internal/adapters/postgres` / `sqlite`：薄包装 + 各自方言的 Open/Migrate；jsonb metadata 空值归一为 nil；upsert 用 `clause.OnConflict`
 - `internal/adapters/db.go`：`OpenDB(driver, dsn)` 工厂 + `OpenDBFromEnv()`（读 `DB_DRIVER`/`DB_DSN`/`DB_MIGRATIONS_DIR`，默认 sqlite 便于调试）
+- `internal/adapters/esxi`：govmomi 提供者，惰性连接 + 指数退避重试；ListVMs 用 ContainerView 批量拉取；ID 用 VM UUID（MOID 存入 metadata）
+- `internal/adapters/mock`：内存态虚拟化模拟器（内置示例 VM/宿主机），开发调试默认
+- `internal/adapters/virt_factory.go`：`NewVirtualizationProvider(virtType, config)`，支持 `esxi`/`mock`（默认 mock），esxi 配置键 `url`/`username`/`password`/`insecure`
 - `internal/domain/services`：业务编排（如 `VMService.SyncVMs`），只依赖 ports 接口
 
 ## 数据库支持矩阵（已实现）
@@ -82,6 +87,11 @@ go env -w GOPROXY=https://goproxy.cn,direct
 - 测试文件带 `//go:build integration` 标签，`make test-integration`/`make test-sqlite` 才执行
 - 每个测试前 `TRUNCATE` 业务表（PostgreSQL）隔离数据
 - gormstore 单元测试（无 tag）使用内存/临时 SQLite，常驻 `make test-unit` 中
+
+## 虚拟化集成测试约定
+
+- ESXi 适配器：`//go:build esxi` 标签 + govmomi 内置 vcsim 模拟器（`simulator.VPX()`），无需真实环境；`make test-esxi` 执行
+- Mock 提供者与工厂：无 tag 常驻单测，`make test-virt` 执行
 
 ## Docker 环境备注
 

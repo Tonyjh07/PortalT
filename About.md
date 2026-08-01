@@ -248,6 +248,17 @@ make test-integration   # 连接实际数据库，所有测试PASS
 make test-esxi   # 配置.env后，成功列出虚拟机
 ```
 
+**验证结果（2026-08-01）**：`make test-esxi` 通过 —— govmomi v0.55.1 + vcsim 模拟 vCenter（`simulator.VPX()`），7 个用例全绿（ListVMs 字段映射/主机名解析/电源操作/NotFound/GetHostInfo/连接失败/会话复用），覆盖率 86.5%；`make test-virt`（mock+工厂）88.9%。`CGO_ENABLED=0` 构建验证通过。
+
+**完成说明**：
+- `internal/adapters/esxi/provider.go`：govmomi 客户端，惰性连接（首次调用建立会话），ListVMs 用 ContainerView 批量拉取（summary/guest/config），宿主机名二次属性收集解析；幂等 `Close()`；`findVM` 支持 UUID（SearchIndex.FindByUuid）与 MOID（vm- 前缀）两种标识
+- 电源操作（StartVM/StopVM/RestartVM）带 Task.Wait，瞬时故障指数退避重试（200ms 起，3 次默认，`MaxRetries`/`Timeout` 可配）
+- 状态映射：PowerState → `domain.VMStatus`；ID 取 `Summary.Config.Uuid`（MOID 存入 `Metadata["moid"]` 供后续控制台使用）
+- `GetHostInfo`：CPU 型号/核数（MHz 换算核数）、内存 MB、平台版本、连接状态
+- `internal/adapters/mock/provider.go`：内存模拟器（3 台示例 VM + 宿主），`SetVMs`/`SetHostInfo` 测试控制
+- `internal/adapters/virt_factory.go`：`NewVirtualizationProvider("esxi"|"mock", config)`；配置键 url/username/password/insecure
+- 可移植性：`VIRT_PROVIDER=mock` 即可零环境开发（接线 Phase 5/6 落地）
+
 **AI生成任务**：
 1. `internal/ports/virtualization.go` - 定义接口：
    ```go
@@ -650,7 +661,8 @@ DOMAIN=portal.yourlab.com
 | Phase 2: 仓储接口与内存实现 | ✅ 完成 | 2026-08-01 | `make test-repo` 通过（100%）；`make test-race` 通过（含并发检测） |
 | Phase 3: PostgreSQL适配器 | ✅ 完成 | 2026-08-01 | `make test-integration` 通过（docker compose PostgreSQL 15 + GORM，含 jsonb metadata 与并发 upsert） |
 | Phase 3.5: SQLite适配器 | ✅ 完成 | 2026-08-01 | 用户调试需求追加：纯Go驱动（glebarez/sqlite，无CGO），gormstore 共享仓储包，`make test-sqlite` 通过；`DB_DRIVER=sqlite` 切换 |
-| Phase 4: ESXi适配器 | ⬜ 未开始 | - | - |
+| Phase 4: ESXi适配器 | ✅ 完成 | 2026-08-01 | govmomi + vcsim 模拟 vCenter，`make test-esxi` 通过；mock 提供者 + 工厂（VIRT_PROVIDER 切换） |
+| Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
 | Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
 | Phase 6: 核心API | ⬜ 未开始 | - | - |
 | Phase 7: 前端 | ⬜ 未开始 | - | - |
