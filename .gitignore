@@ -1,0 +1,24 @@
+# Go
+backend/bin/
+backend/vendor/
+*.exe
+
+# Node
+node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/dist/
+
+# 环境与密钥
+.env
+.env.local
+*.pem
+*.key
+
+# IDE / 系统
+.idea/
+.vscode/
+*.suo
+*.user
+.DS_Store
+Thumbs.db

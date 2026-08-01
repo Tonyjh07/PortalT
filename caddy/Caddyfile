@@ -1,0 +1,6 @@
+# PortalT Caddy 配置 (Phase 0 占位)
+# Phase 6+ 将配置域名、HTTPS 与反向代理到 backend/frontend
+
+:80 {
+	respond "PortalT Caddy is running"
+}
