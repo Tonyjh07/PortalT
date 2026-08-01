@@ -98,6 +98,14 @@ func TestVM_IsRunning(t *testing.T) {
 func TestVM_JSONFields(t *testing.T) {
 	// 验证JSON序列化使用预期字段名（API契约）
 	vm := vmWithStatus(VMStatusPoweredOn)
-	json := `{"id":"vm-1","name":"test-vm","status":"poweredOn","cpu":2,"memory_mb":4096,"ip_address":"192.168.1.10","host":"esxi-01"}`
+	json := `{"id":"vm-1","name":"test-vm","status":"poweredOn","cpu":2,"memory_mb":4096,"ip_address":"192.168.1.10","host":"esxi-01","metadata":null}`
+	assert.Equal(t, json, string(mustMarshal(t, vm)))
+}
+
+func TestVM_MetadataJSON(t *testing.T) {
+	vm := vmWithStatus(VMStatusPoweredOn)
+	vm.Metadata = map[string]any{"proto": "rdp", "port": 3389}
+
+	json := `{"id":"vm-1","name":"test-vm","status":"poweredOn","cpu":2,"memory_mb":4096,"ip_address":"192.168.1.10","host":"esxi-01","metadata":{"port":3389,"proto":"rdp"}}`
 	assert.Equal(t, json, string(mustMarshal(t, vm)))
 }

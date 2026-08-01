@@ -34,6 +34,8 @@ type VM struct {
 	IPAddress string `json:"ip_address"`
 	// Host 所在宿主机
 	Host string `json:"host"`
+	// Metadata 扩展元数据（JSONB存储），如远程桌面连接参数
+	Metadata map[string]any `json:"metadata"`
 }
 
 // CanStart 判断虚拟机当前是否允许执行启动操作。

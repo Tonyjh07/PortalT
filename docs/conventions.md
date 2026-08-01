@@ -37,8 +37,10 @@ go env -w GOPROXY=https://goproxy.cn,direct
 | `make init` | 创建目录骨架 + 下载依赖 | ✅ 可用 |
 | `make run` | 启动后端（go run） | ✅ 可用 |
 | `make test-domain` | domain 层单测（覆盖率） | ✅ 通过（100%） |
-| `make test-repo` | 内存仓储测试 | ✅ 通过（100%） |
+| `make test-repo` | 内存 + gormstore 仓储测试（gormstore 用内存SQLite，无需外部服务） | ✅ 通过 |
+| `make test-sqlite` | SQLite 适配器集成测试（临时文件库，无需外部服务） | ✅ 通过 |
 | `make test-race` | 全部单测 + 竞态检测（需 MinGW） | ✅ 通过 |
+| `make test-integration` | 全部适配器集成测试（SQLite 免服务；PostgreSQL 需 `docker compose up -d postgres`） | ✅ 通过 |
 | `make test` | 汇总测试（test-domain + test-repo + test-api） | ⏳ 依赖后续阶段 |
 | `make build` | 构建后端二进制 `backend/bin/portalt.exe` | ✅ 可用 |
 | `make docker-build` | 构建 Docker 镜像 | ⏳ 依赖 Dockerfile |
@@ -59,7 +61,33 @@ go env -w GOPROXY=https://goproxy.cn,direct
 - `internal/domain`：领域实体与业务方法，零外部依赖
 - `internal/ports`：仓储/虚拟化/认证接口定义 + 错误哨兵，无实现
 - `internal/adapters/memory`：内存仓储（测试/开发用），编译期断言实现接口（`var _ ports.VMRepository = (*VMRepository)(nil)`）
+- `internal/adapters/gormstore`：**方言无关**的 GORM 模型与仓储（postgres/sqlite 共用，单一事实来源）
+- `internal/adapters/postgres` / `sqlite`：薄包装 + 各自方言的 Open/Migrate；jsonb metadata 空值归一为 nil；upsert 用 `clause.OnConflict`
+- `internal/adapters/db.go`：`OpenDB(driver, dsn)` 工厂 + `OpenDBFromEnv()`（读 `DB_DRIVER`/`DB_DSN`/`DB_MIGRATIONS_DIR`，默认 sqlite 便于调试）
 - `internal/domain/services`：业务编排（如 `VMService.SyncVMs`），只依赖 ports 接口
+
+## 数据库支持矩阵（已实现）
+
+| 驱动 | 依赖 | 迁移脚本 | 用途 |
+|------|------|---------|------|
+| postgres | GORM + jackc/pgx | `backend/migrations/*.up.sql` | 生产 |
+| sqlite | glebarez/sqlite（纯Go，无CGO） | `backend/migrations/sqlite/*.up.sql` | 调试/轻量部署 |
+
+切换示例：`DB_DRIVER=sqlite DB_DSN=./portalt.db make run`（main.go 接线在 Phase 5/6 落地）。
+
+## 集成测试约定
+
+- PostgreSQL：`docker compose up -d postgres`（默认凭据 portalt/securepassword），`TEST_DATABASE_URL` 覆盖
+- SQLite：无需任何服务，使用临时文件数据库
+- 测试文件带 `//go:build integration` 标签，`make test-integration`/`make test-sqlite` 才执行
+- 每个测试前 `TRUNCATE` 业务表（PostgreSQL）隔离数据
+- gormstore 单元测试（无 tag）使用内存/临时 SQLite，常驻 `make test-unit` 中
+
+## Docker 环境备注
+
+- **2026-08-01 问题记录**：原 registry 镜像源（hub-mirror.c.163.com 已死、tencentyun 内网专用）导致拉取失败。已改为 `https://docker.m.daocloud.io` + `https://docker.1ms.run`（`~/.docker/daemon.json`，备份在 daemon.json.bak）
+- **重要**：修改 daemon.json 后必须**完全退出 Docker Desktop**（托盘 Quit，确保 `com.docker.backend.exe` 进程结束），仅重启 WSL/关窗口无效——backend 进程只在启动时读取一次 daemon.json 并缓存（根因由调试确认）
+- 镜像站带宽有限，首次拉取大镜像可能较慢
 
 ## 日志与错误处理约定
 

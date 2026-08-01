@@ -1,0 +1,6 @@
+-- PortalT SQLite 方言迁移：回滚
+
+DROP TABLE IF EXISTS permissions;
+DROP TABLE IF EXISTS plugins;
+DROP TABLE IF EXISTS vms;
+DROP TABLE IF EXISTS users;

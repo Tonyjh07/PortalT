@@ -59,6 +59,9 @@ type UserRepository interface {
 
 - 记录不存在返回 `ports.ErrNotFound`；参数无效返回 `ports.ErrInvalidArgument`
 - 已实现：`internal/adapters/memory`（sync.RWMutex + map，100% 覆盖率，通过 -race）
+- 已实现：`internal/adapters/gormstore`（方言无关 GORM 实现，postgres/sqlite 共用）
+- 已实现：`internal/adapters/postgres`（薄包装 + PostgreSQL 方言迁移，原子 upsert `clause.OnConflict`，jsonb metadata 归一化）
+- 已实现：`internal/adapters/sqlite`（薄包装 + SQLite 方言迁移，纯 Go 驱动无 CGO）
 
 ## 虚拟化提供者接口（internal/ports/virtualization.go）
 
@@ -110,6 +113,7 @@ type VirtualizationProvider interface {
 | memory_mb | int | 内存（MB） |
 | ip_address | string | IP 地址 |
 | host | string | 宿主机 |
+| metadata | object/null | 扩展元数据（jsonb），如远程桌面连接参数 |
 
 业务方法：`CanStart()`（关机/挂起可启动）、`CanStop()`、`CanRestart()`（运行中可执行）、`IsRunning()`。
 
@@ -162,3 +166,26 @@ type VirtualizationProvider interface {
 | vm:start / vm:stop / vm:restart | ✅ | ✅ | ❌ |
 | plugin:view | ✅ | ✅ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
+
+## 数据库表结构（backend/migrations/001_init.up.sql）
+
+| 表 | 关键字段 | 说明 |
+|----|---------|------|
+| users | id(PK), username(UNIQUE), password_hash, email, role, created_at | 用户账号 |
+| vms | id(PK), name, status, cpu, memory_mb, ip_address, host, metadata(JSONB), created_at, updated_at | 虚拟机目录 |
+| plugins | id(PK), name, icon, route(UNIQUE), iframe_url, permission, sort_order, is_active, created_at, updated_at | 插件菜单 |
+| permissions | id(PK), name(UNIQUE), description, created_at | 权限字典（预留） |
+
+- 迁移脚本：`001_init.up.sql` / `001_init.down.sql`，由 `postgres.Migrate(db, dir)` 按文件名顺序执行
+- SQLite 方言迁移：`migrations/sqlite/001_init.{up,down}.sql`（metadata 用 TEXT 存 JSON，is_active 用 0/1）
+- `make test-integration` 自动应用迁移后测试；`TEST_DATABASE_URL` 可覆盖连接
+
+## 数据库工厂（internal/adapters/db.go）
+
+```go
+OpenDB(driver, dsn string) (*gorm.DB, error)  // driver: "postgres" | "sqlite"
+OpenDBFromEnv(ctx) (*gorm.DB, error)
+```
+
+- `OpenDBFromEnv` 读取 `DB_DRIVER`（默认 sqlite）、`DB_DSN`、`DB_MIGRATIONS_DIR`（默认 backend/migrations）并自动应用对应方言迁移
+- 生产 `DB_DRIVER=postgres`；调试/轻量部署 `DB_DRIVER=sqlite DB_DSN=./portalt.db`

@@ -2,7 +2,7 @@
 # 环境要求: Go 1.21+, Node 20+, Docker 24+, GNU Make (Windows需配 sh.exe)
 
 .PHONY: version init init-backend init-frontend run run-backend \
-        test test-unit test-domain test-repo test-integration test-esxi test-auth \
+        test test-unit test-domain test-repo test-sqlite test-integration test-esxi test-auth \
         test-api test-e2e \
         build build-backend \
         docker-build docker-build-backend docker-build-caddy docker-build-frontend \
@@ -96,10 +96,13 @@ test-domain:
 	@cd $(BACKEND_DIR) && $(GO) test ./internal/domain/... -cover -count=1
 
 test-repo:
-	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/memory/... -count=1
+	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/memory/... ./internal/adapters/gormstore/... -count=1
 
 test-race:
 	@cd $(BACKEND_DIR) && CC="$(MINGW_GCC)" $(GO) test -race ./... -count=1
+
+test-sqlite:
+	@cd $(BACKEND_DIR) && $(GO) test -tags integration ./internal/adapters/sqlite/... -count=1
 
 test-integration:
 	@cd $(BACKEND_DIR) && $(GO) test -tags integration ./internal/adapters/... -count=1
