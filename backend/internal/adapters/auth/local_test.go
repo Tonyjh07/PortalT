@@ -74,11 +74,11 @@ func TestLocalProvider_Authenticate_RepoErrorPropagates(t *testing.T) {
 // failingRepo 模拟仓储故障，验证错误正确传播。
 type failingRepo struct{ err error }
 
-func (r *failingRepo) Save(*domain.User) error                        { return r.err }
-func (r *failingRepo) FindByID(string) (*domain.User, error)          { return nil, r.err }
-func (r *failingRepo) FindByUsername(string) (*domain.User, error)    { return nil, r.err }
-func (r *failingRepo) FindAll() ([]*domain.User, error)               { return nil, r.err }
-func (r *failingRepo) Delete(string) error                            { return r.err }
+func (r *failingRepo) Save(*domain.User) error                     { return r.err }
+func (r *failingRepo) FindByID(string) (*domain.User, error)       { return nil, r.err }
+func (r *failingRepo) FindByUsername(string) (*domain.User, error) { return nil, r.err }
+func (r *failingRepo) FindAll() ([]*domain.User, error)            { return nil, r.err }
+func (r *failingRepo) Delete(string) error                         { return r.err }
 
 func TestHashPassword(t *testing.T) {
 	hash, err := HashPassword("hello")

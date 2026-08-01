@@ -1,6 +1,6 @@
 # PortalT 接口文档
 
-> 仅记录当前已实现的接口与契约（截至 Phase 5）。
+> 仅记录当前已实现的接口与契约（截至 Phase 6）。
 
 ## 响应格式
 
@@ -25,6 +25,9 @@
 | 4002 | 令牌无效或已过期 | 401 |
 | 4003 | 缺少访问令牌 | 401 |
 | 4004 | 请求参数错误 | 400 |
+| 4005 | 权限不足 | 403 |
+| 4006 | 资源不存在 | 404 |
+| 4007 | 操作在当前状态不允许 | 409 |
 | 5000 | 服务器内部错误 | 500 |
 
 ## 已实现 HTTP 接口
@@ -61,6 +64,59 @@ GET /api/v1/auth/me
 
 - 需 `Authorization: Bearer <access_token>`
 - 响应：当前用户信息（无密码字段）
+
+### 虚拟机管理（需认证）
+
+权限：所有路由需 `vm:view`；电源操作分别需 `vm:start`/`vm:stop`/`vm:restart`。
+
+```
+GET /api/v1/vms                    → 全部虚拟机（按名称排序）
+GET /api/v1/vms/:id                → 虚拟机详情
+GET /api/v1/vms/:id/status         → 实时状态（从平台回刷，轮询用）
+POST /api/v1/vms/:id/start         → 启动（仅关机/挂起态，否则 409/4007）
+POST /api/v1/vms/:id/stop          → 停止（仅运行态，否则 409/4007）
+POST /api/v1/vms/:id/restart       → 重启（仅运行态，否则 409/4007）
+```
+
+- 电源操作成功后返回最新 VM（服务层从平台回刷并落库）
+- 服务启动时执行一次全量同步（`SyncVMs`），目录为空时列表为空数组
+
+### 动态菜单（需认证）
+
+```
+GET /api/v1/menu
+```
+
+- 需 `plugin:view`（viewer 角色无此权限 → 403）
+- 返回当前用户可见的已启用插件，按 `sort_order` 升序
+- 过滤规则（`domain.Plugin.CanAccess`）：插件已启用 + 无 `permission` 要求或用户具备对应权限
+
+### 插件管理（需认证 + `plugin:manage`，仅管理员）
+
+```
+GET    /api/v1/plugins     → 全部插件（含停用）
+POST   /api/v1/plugins     → 注册插件（name/route 必填，自动生成ID）
+PUT    /api/v1/plugins/:id → 更新插件（全字段覆盖）
+DELETE /api/v1/plugins/:id → 删除插件
+```
+
+- 请求体：`{"name","icon","route","iframe_url","permission","sort_order","is_active"}`
+
+### Guacamole 远程桌面代理（需认证）
+
+```
+GET /api/v1/guac/ws/:vmId
+```
+
+- 需 `vm:view`；`GUAC_URL` 未配置时返回 503
+- WebSocket 双向转发到 Guacamole 隧道（`GUAC_URL`，http/https 自动转 ws/wss）
+- 上游注入请求头：`X-PortalT-User`（用户名）、`X-PortalT-Role`、`X-PortalT-VMID`
+- 上游不可达返回 502
+
+### RBAC 中间件（internal/api/middleware/rbac.go）
+
+- `RequirePermission(perm)`：需在 `AuthRequired` 之后使用
+- 用户无对应权限或未认证 → 403/4005（权限常量见 `internal/domain/permission.go`）
 
 ### 认证中间件（internal/api/middleware/auth.go）
 
@@ -151,6 +207,24 @@ NewVirtualizationProvider(virtType string, config map[string]string) (ports.Virt
 |------|------|
 | `SyncVMs(ctx)` | 从提供者拉取全部VM保存入库，删除提供者中已不存在的陈旧记录；提供者报错时不做任何变更 |
 | `ListVMs(ctx)` | 返回仓储中的全部VM |
+| `GetVM(ctx, id)` | 按ID查询VM详情（不存在 → ErrNotFound） |
+| `StartVM/StopVM/RestartVM(ctx, id)` | 电源操作：加载 → 校验状态规则（CanStart/CanStop/CanRestart）→ 调用提供者 → 回刷状态入库；违反状态规则 → `ErrInvalidOperation` |
+| `GetVMStatus(ctx, id)` | 实时状态：优先从提供者拉取并回写仓储，提供者不可达时回退仓储缓存 |
+
+## PluginRepository 接口（internal/ports/repository.go）
+
+```go
+type PluginRepository interface {
+    Save(p *domain.Plugin) error              // upsert语义
+    FindByID(id string) (*domain.Plugin, error)
+    FindActive() ([]*domain.Plugin, error)    // 已启用，按 sort_order 升序
+    FindAll() ([]*domain.Plugin, error)       // 全部（含停用）
+    Delete(id string) error
+}
+```
+
+- 已实现：`internal/adapters/gormstore`（共享层）+ `memory`；postgres/sqlite 为类型绑定包装
+- `plugins` 表结构见迁移脚本 `migrations/001_init.up.sql`
 
 ## HostInfo JSON 契约（internal/domain/host.go）
 

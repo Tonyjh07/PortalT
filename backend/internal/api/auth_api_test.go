@@ -14,27 +14,53 @@ import (
 
 	authadapter "portalt/internal/adapters/auth"
 	"portalt/internal/adapters/memory"
+	"portalt/internal/adapters/mock"
 	"portalt/internal/api/v1"
+	"portalt/internal/domain/services"
+	"portalt/internal/ports"
 )
 
-// testEnv 组装完整的 API 环境（真实仓储 + 认证 + JWT）。
+// testEnv 组装完整的 API 环境（真实仓储 + 认证 + JWT + 虚拟机服务）。
 type testEnv struct {
-	router *gin.Engine
-	repo   *memory.UserRepository
+	router   *gin.Engine
+	userRepo *memory.UserRepository
+	vmRepo   *memory.VMRepository
+	plugins  *memory.PluginRepository
+	provider *mock.Provider
+	tm       ports.TokenManager
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 
-	repo := memory.NewUserRepository()
-	require.NoError(t, authadapter.EnsureAdminUser(t.Context(), repo, "admin", "admin123"))
+	userRepo := memory.NewUserRepository()
+	require.NoError(t, authadapter.EnsureAdminUser(t.Context(), userRepo, "admin", "admin123"))
 
-	authProvider := authadapter.NewLocalProvider(repo)
+	authProvider := authadapter.NewLocalProvider(userRepo)
 	tm := authadapter.NewJWTManager("test-secret", 15*time.Minute, 7*24*time.Hour)
 
-	handler := v1.NewAuthHandler(authProvider, tm)
-	return &testEnv{router: NewRouter(tm, handler), repo: repo}
+	provider := mock.NewProvider(nil)
+	vmRepo := memory.NewVMRepository()
+	plugins := memory.NewPluginRepository()
+
+	router := NewRouter(tm, &HandlerSet{
+		Auth:   v1.NewAuthHandler(authProvider, tm),
+		VM:     v1.NewVMHandler(services.NewVMService(vmRepo, provider)),
+		Menu:   v1.NewMenuHandler(plugins),
+		Plugin: v1.NewPluginHandler(plugins),
+		Guac:   v1.NewGuacHandler(""),
+	})
+	return &testEnv{router: router, userRepo: userRepo, vmRepo: vmRepo, plugins: plugins, provider: provider, tm: tm}
+}
+
+// loginAndToken 登录管理员并返回访问令牌。
+func loginAndToken(t *testing.T, env *testEnv) string {
+	t.Helper()
+	_, body := login(t, env.router, "admin", "admin123")
+	token := body["data"].(map[string]any)["access_token"].(string)
+	require.NotEmpty(t, token)
+	return token
 }
 
 // doRequest 执行 HTTP 请求并返回响应。

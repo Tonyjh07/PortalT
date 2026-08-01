@@ -338,6 +338,18 @@ curl -X POST http://localhost:8080/api/v1/auth/login -d '{"username":"admin","pa
 make test-api   # 所有API测试PASS
 ```
 
+**验证结果（2026-08-01）**：`make test-api` 通过（v1 处理器 54.9%、middleware、api 端到端全绿）；全量回归（test-unit/test-integration/test-esxi/test-sqlite/test-race）通过；curl 端到端实测：启动同步 3 台 mock VM → 列表/详情/状态轮询 → stop/start 电源操作（重复 stop 409）→ 插件创建/停用/删除 → 菜单按权限过滤 → 未认证 401。
+
+**完成说明**：
+- `ports`：新增 `PluginRepository` 接口与 `ErrInvalidOperation` 哨兵；响应码新增 4005（权限不足/403）、4006（不存在/404）、4007（状态不允许/409）
+- `domain/services`：`StartVM/StopVM/RestartVM/GetVM/GetVMStatus` —— 电源操作统一编排（加载 → 状态规则校验 → 提供者调用 → 回刷入库）；`GetVMStatus` 提供者不可达时回退仓储缓存（轮询安全）
+- `adapters`：插件仓储四件套（gormstore 共享层 + memory + postgres/sqlite 绑定包装），`FindActive` 按 sort_order 确定性排序；`auth.NewID` 导出供插件创建使用
+- `api`：`rbac.go`（RequirePermission，基于角色权限表）；`v1/vm.go`（列表/详情/状态/电源操作）；`v1/menu.go`（按 CanAccess 过滤）；`v1/plugin.go`（管理员 CRUD）；`v1/guac.go`（gorilla/websocket 双向代理，注入 X-PortalT-* 身份头，GUAC_URL 未配置返回 503）
+- `cmd/server`：启动时执行一次 `SyncVMs` 全量同步，目录立即可用；`VIRT_ESXI_*` 环境变量接入工厂
+- 测试：VM 服务层（状态规则/回退/错误）、插件仓储（三方言）、RBAC 中间件、处理器单测（含 WebSocket 回环与头部断言）、API 端到端（角色权限矩阵：admin 全通、user 可启停但不可管理插件、viewer 仅查看）
+
+**经验**：PowerShell `Set-Content` 会破坏 UTF-8 中文注释，批量改写必须用工具直写；测试桩里的电源操作必须真实变更状态，否则"回刷"断言恒失败；viewer 角色无 `plugin:view`，菜单 403 是正确行为而非过滤 bug（演示过滤需用 user 角色）。
+
 **AI生成任务**：
 1. `internal/api/v1/vm.go` - VM管理API：
    - GET `/api/v1/vms` → 返回所有虚拟机（仅用户有权限的）
@@ -674,9 +686,7 @@ DOMAIN=portal.yourlab.com
 | Phase 3.5: SQLite适配器 | ✅ 完成 | 2026-08-01 | 用户调试需求追加：纯Go驱动（glebarez/sqlite，无CGO），gormstore 共享仓储包，`make test-sqlite` 通过；`DB_DRIVER=sqlite` 切换 |
 | Phase 4: ESXi适配器 | ✅ 完成 | 2026-08-01 | govmomi + vcsim 模拟 vCenter，`make test-esxi` 通过；mock 提供者 + 工厂（VIRT_PROVIDER 切换） |
 | Phase 5: 认证与JWT | ✅ 完成 | 2026-08-01 | bcrypt 本地认证 + JWT（access 15m/refresh 7d）+ Gin 登录/刷新/me + 管理员引导，`make test-auth` + curl 实测通过 |
-| Phase 6: 核心API | ⬜ 未开始 | - | - |
-| Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
-| Phase 6: 核心API | ⬜ 未开始 | - | - |
+| Phase 6: 核心API | ✅ 完成 | 2026-08-01 | VM 管理/状态轮询 + 动态菜单 + 插件管理 + Guacamole WS 代理 + RBAC 中间件；`make test-api` + curl 实测通过 |
 | Phase 7: 前端 | ⬜ 未开始 | - | - |
 | Phase 8: Guacamole集成 | ⬜ 未开始 | - | - |
 | Phase 9: 插件系统 | ⬜ 未开始 | - | - |

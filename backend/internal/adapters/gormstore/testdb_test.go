@@ -20,7 +20,7 @@ func newTestDB(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, db.AutoMigrate(&vmModel{}, &userModel{}))
+	require.NoError(t, db.AutoMigrate(&vmModel{}, &userModel{}, &pluginModel{}))
 
 	// 测试结束后关闭连接池，释放 SQLite 文件锁
 	t.Cleanup(func() {

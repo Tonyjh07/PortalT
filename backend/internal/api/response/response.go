@@ -15,6 +15,9 @@ const (
 	CodeInvalidToken       = 4002 // 令牌无效或已过期
 	CodeMissingToken       = 4003 // 缺少访问令牌
 	CodeBadRequest         = 4004 // 请求参数错误
+	CodeForbidden          = 4005 // 权限不足
+	CodeNotFound           = 4006 // 资源不存在
+	CodeInvalidOperation   = 4007 // 操作在当前状态不允许
 	CodeServerError        = 5000 // 服务器内部错误
 )
 

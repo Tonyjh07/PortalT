@@ -77,7 +77,7 @@ func EnsureAdminUser(ctx context.Context, users ports.UserRepository, username, 
 		return err
 	}
 	admin := &domain.User{
-		ID:       newID(),
+		ID:       NewID(),
 		Username: username,
 		Password: hash,
 		Role:     domain.RoleAdmin,

@@ -16,6 +16,8 @@ var (
 	ErrNotFound = errors.New("record not found")
 	// ErrInvalidArgument 参数无效（如空ID、nil对象）
 	ErrInvalidArgument = errors.New("invalid argument")
+	// ErrInvalidOperation 业务操作在当前状态不允许（如对运行中的VM执行启动）
+	ErrInvalidOperation = errors.New("invalid operation")
 )
 
 // VMRepository 虚拟机数据仓储接口。
@@ -43,5 +45,20 @@ type UserRepository interface {
 	// FindAll 返回全部用户
 	FindAll() ([]*domain.User, error)
 	// Delete 按ID删除用户，不存在返回 ErrNotFound
+	Delete(id string) error
+}
+
+// PluginRepository 插件（动态菜单）数据仓储接口。
+// 由 adapters 层实现，供菜单与插件管理使用。
+type PluginRepository interface {
+	// Save 保存插件（存在则覆盖，upsert语义）
+	Save(plugin *domain.Plugin) error
+	// FindByID 按ID查找插件，不存在返回 ErrNotFound
+	FindByID(id string) (*domain.Plugin, error)
+	// FindActive 返回全部已启用插件，按 SortOrder 升序（确定性排序）
+	FindActive() ([]*domain.Plugin, error)
+	// FindAll 返回全部插件（含停用），按 SortOrder 升序
+	FindAll() ([]*domain.Plugin, error)
+	// Delete 按ID删除插件，不存在返回 ErrNotFound
 	Delete(id string) error
 }

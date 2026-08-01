@@ -49,6 +49,7 @@ func TestSQLite_MigrateAndCrud(t *testing.T) {
 	db, path := setupTestDB(t)
 	vmRepo := NewVMRepository(db)
 	userRepo := NewUserRepository(db)
+	pluginRepo := NewPluginRepository(db)
 
 	// VM 全流程
 	vm := &domain.VM{
@@ -67,6 +68,20 @@ func TestSQLite_MigrateAndCrud(t *testing.T) {
 	gotUser, err := userRepo.FindByUsername("admin")
 	require.NoError(t, err)
 	assert.Equal(t, "u-1", gotUser.ID)
+
+	// 插件全流程
+	plugin := &domain.Plugin{ID: "p-1", Name: "HA", Route: "/ha", IframeURL: "https://ha.local",
+		Permission: "vm:view", SortOrder: 3, IsActive: true}
+	require.NoError(t, pluginRepo.Save(plugin))
+	gotPlugin, err := pluginRepo.FindByID("p-1")
+	require.NoError(t, err)
+	assert.Equal(t, "https://ha.local", gotPlugin.IframeURL)
+	assert.True(t, gotPlugin.IsActive)
+
+	active, err := pluginRepo.FindActive()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, "p-1", active[0].ID)
 
 	require.NoError(t, vmRepo.Delete("vm-1"))
 	_, err = vmRepo.FindByID("vm-1")

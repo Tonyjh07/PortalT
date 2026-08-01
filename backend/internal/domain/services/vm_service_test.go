@@ -26,9 +26,26 @@ func (s *stubProvider) ListVMs() ([]*domain.VM, error) {
 	return s.vms, s.err
 }
 
-func (s *stubProvider) StartVM(id string) error   { return nil }
-func (s *stubProvider) StopVM(id string) error    { return nil }
-func (s *stubProvider) RestartVM(id string) error { return nil }
+func (s *stubProvider) StartVM(id string) error {
+	return s.applyOp(id, domain.VMStatusPoweredOn)
+}
+func (s *stubProvider) StopVM(id string) error {
+	return s.applyOp(id, domain.VMStatusPoweredOff)
+}
+func (s *stubProvider) RestartVM(id string) error {
+	return s.applyOp(id, domain.VMStatusPoweredOn)
+}
+
+// applyOp 将电源操作结果应用到桩提供者的 VM 集合（模拟真实平台行为）。
+func (s *stubProvider) applyOp(id string, status domain.VMStatus) error {
+	for _, vm := range s.vms {
+		if vm.ID == id {
+			vm.Status = status
+			return nil
+		}
+	}
+	return errors.New("provider: vm not found")
+}
 
 func (s *stubProvider) GetHostInfo() (*domain.HostInfo, error) {
 	return s.host, s.err
@@ -176,4 +193,124 @@ func TestVMService_ListVMs(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, vms, 1)
 	assert.Equal(t, "vm-1", vms[0].ID)
+}
+
+// setStatus 修改桩提供者中 VM 的状态并回写内存仓储。
+func (s *stubProvider) setStatus(t *testing.T, id string, status domain.VMStatus) {
+	t.Helper()
+	for _, vm := range s.vms {
+		if vm.ID == id {
+			vm.Status = status
+			return
+		}
+	}
+	t.Fatalf("provider 中不存在 VM %q", id)
+}
+
+func TestVMService_GetVM(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web"}))
+
+	vm, err := svc.GetVM(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, "vm-1", vm.ID)
+
+	_, err = svc.GetVM(context.Background(), "ghost")
+	assert.ErrorIs(t, err, ports.ErrNotFound)
+}
+
+func TestVMService_GetVMStatus(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}}
+
+	vm, err := svc.GetVMStatus(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOff, vm.Status)
+
+	// 回写仓储
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOff, stored.Status)
+}
+
+func TestVMService_GetVMStatus_ProviderDown_FallsBack(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}))
+	provider.vms = nil
+	provider.err = errors.New("esxi unreachable")
+
+	// 提供者不可达时回退仓储缓存
+	vm, err := svc.GetVMStatus(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOn, vm.Status)
+
+	// VM 也不在仓储中时返回 ErrNotFound
+	_, err = svc.GetVMStatus(context.Background(), "ghost")
+	assert.ErrorIs(t, err, ports.ErrNotFound)
+}
+
+func TestVMService_StartVM_Success(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}}
+
+	vm, err := svc.StartVM(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOn, vm.Status)
+
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOn, stored.Status)
+}
+
+func TestVMService_StartVM_AlreadyRunning(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}))
+
+	_, err := svc.StartVM(context.Background(), "vm-1")
+	assert.ErrorIs(t, err, ports.ErrInvalidOperation)
+}
+
+func TestVMService_StopVM_Success(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}}
+
+	vm, err := svc.StopVM(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOff, vm.Status)
+}
+
+func TestVMService_StopVM_NotRunning(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}))
+
+	_, err := svc.StopVM(context.Background(), "vm-1")
+	assert.ErrorIs(t, err, ports.ErrInvalidOperation)
+}
+
+func TestVMService_RestartVM_Success(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn}}
+
+	vm, err := svc.RestartVM(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOn, vm.Status)
+}
+
+func TestVMService_RestartVM_NotRunning(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}))
+
+	_, err := svc.RestartVM(context.Background(), "vm-1")
+	assert.ErrorIs(t, err, ports.ErrInvalidOperation)
+}
+
+func TestVMService_PowerOp_NotFound(t *testing.T) {
+	svc, _, _ := newTestService()
+
+	_, err := svc.StartVM(context.Background(), "ghost")
+	assert.ErrorIs(t, err, ports.ErrNotFound)
 }

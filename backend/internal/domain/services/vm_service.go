@@ -67,3 +67,72 @@ func (s *VMService) SyncVMs(ctx context.Context) (int, error) {
 func (s *VMService) ListVMs(ctx context.Context) ([]*domain.VM, error) {
 	return s.repo.FindAll()
 }
+
+// GetVM 按ID返回虚拟机详情。
+func (s *VMService) GetVM(ctx context.Context, id string) (*domain.VM, error) {
+	return s.repo.FindByID(id)
+}
+
+// StartVM 启动虚拟机。
+// 流程：加载 → 校验状态规则（仅关机/挂起可启动）→ 调用提供者 → 回刷状态并保存。
+func (s *VMService) StartVM(ctx context.Context, id string) (*domain.VM, error) {
+	return s.powerOp(ctx, id, func(vm *domain.VM) error {
+		if !vm.CanStart() {
+			return fmt.Errorf("vm %q: %w: 当前状态 %s 不允许启动", id, ports.ErrInvalidOperation, vm.Status)
+		}
+		return s.provider.StartVM(id)
+	})
+}
+
+// StopVM 停止虚拟机（仅运行中可停止）。
+func (s *VMService) StopVM(ctx context.Context, id string) (*domain.VM, error) {
+	return s.powerOp(ctx, id, func(vm *domain.VM) error {
+		if !vm.CanStop() {
+			return fmt.Errorf("vm %q: %w: 当前状态 %s 不允许停止", id, ports.ErrInvalidOperation, vm.Status)
+		}
+		return s.provider.StopVM(id)
+	})
+}
+
+// RestartVM 重启虚拟机（仅运行中可重启）。
+func (s *VMService) RestartVM(ctx context.Context, id string) (*domain.VM, error) {
+	return s.powerOp(ctx, id, func(vm *domain.VM) error {
+		if !vm.CanRestart() {
+			return fmt.Errorf("vm %q: %w: 当前状态 %s 不允许重启", id, ports.ErrInvalidOperation, vm.Status)
+		}
+		return s.provider.RestartVM(id)
+	})
+}
+
+// GetVMStatus 获取虚拟机实时状态（轮询用）。
+// 优先从提供者查询最新状态并回写仓储；提供者不可达时回退到仓储缓存。
+func (s *VMService) GetVMStatus(ctx context.Context, id string) (*domain.VM, error) {
+	live, err := s.provider.ListVMs()
+	if err == nil {
+		for _, vm := range live {
+			if vm != nil && vm.ID == id {
+				if err := s.repo.Save(vm); err != nil {
+					return nil, fmt.Errorf("refresh vm %q: %w", id, err)
+				}
+				return vm, nil
+			}
+		}
+	}
+	return s.repo.FindByID(id)
+}
+
+// powerOp 电源操作公共编排：加载 → 校验规则 → 执行 → 回刷状态。
+func (s *VMService) powerOp(ctx context.Context, id string, op func(*domain.VM) error) (*domain.VM, error) {
+	vm, err := s.repo.FindByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if err := op(vm); err != nil {
+		return nil, err
+	}
+	// 操作成功后从提供者回刷最新状态（VM被误删等极端情况以提供者为准）
+	if refreshed, err := s.GetVMStatus(ctx, id); err == nil {
+		return refreshed, nil
+	}
+	return vm, nil
+}

@@ -17,6 +17,7 @@ import (
 	"portalt/internal/adapters/gormstore"
 	"portalt/internal/api"
 	"portalt/internal/api/v1"
+	"portalt/internal/domain/services"
 )
 
 const (
@@ -37,6 +38,8 @@ func main() {
 		log.Fatalf("数据库初始化失败: %v", err)
 	}
 	userRepo := gormstore.NewUserRepository(db)
+	vmRepo := gormstore.NewVMRepository(db)
+	pluginRepo := gormstore.NewPluginRepository(db)
 
 	// 认证与令牌
 	secret := envOr("JWT_SECRET", "")
@@ -55,9 +58,34 @@ func main() {
 	}
 	log.Printf("管理员账号已就绪（%s）", envOr("ADMIN_USERNAME", "admin"))
 
+	// 虚拟化提供者与 VM 服务
+	provider, err := adapters.NewVirtualizationProvider(envOr("VIRT_PROVIDER", "mock"), map[string]string{
+		"url":      envOr("VIRT_ESXI_URL", ""),
+		"username": envOr("VIRT_ESXI_USERNAME", ""),
+		"password": envOr("VIRT_ESXI_PASSWORD", ""),
+		"insecure": envOr("VIRT_ESXI_INSECURE", "false"),
+	})
+	if err != nil {
+		log.Fatalf("虚拟化提供者初始化失败: %v", err)
+	}
+	vmService := services.NewVMService(vmRepo, provider)
+
+	// 启动时从平台同步一次虚拟机目录
+	if n, err := vmService.SyncVMs(ctx); err != nil {
+		log.Printf("警告: 初始 VM 同步失败: %v", err)
+	} else {
+		log.Printf("VM 目录已同步: %d 台", n)
+	}
+
 	// 路由
 	api.AppVersion = AppVersion
-	router := api.NewRouter(tm, v1.NewAuthHandler(authProvider, tm))
+	router := api.NewRouter(tm, &api.HandlerSet{
+		Auth:   v1.NewAuthHandler(authProvider, tm),
+		VM:     v1.NewVMHandler(vmService),
+		Menu:   v1.NewMenuHandler(pluginRepo),
+		Plugin: v1.NewPluginHandler(pluginRepo),
+		Guac:   v1.NewGuacHandler(v1.GuacURLFromEnv()),
+	})
 
 	srv := &http.Server{
 		Addr:              listenAddr,
