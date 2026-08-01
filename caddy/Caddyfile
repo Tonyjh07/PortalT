@@ -1,6 +1,8 @@
-# PortalT Caddy 配置 (Phase 0 占位)
-# Phase 6+ 将配置域名、HTTPS 与反向代理到 backend/frontend
+# PortalT Caddy 配置
+# Phase 10 将启用域名与 HTTPS；当前按 Docker Compose 内部主机名反代
 
 :80 {
-	respond "PortalT Caddy is running"
+	reverse_proxy /api/* backend:8080
+	reverse_proxy /healthz backend:8080
+	reverse_proxy /* frontend:3000
 }

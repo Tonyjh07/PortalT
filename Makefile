@@ -1,10 +1,10 @@
 # PortalT - HomeLab统一门户系统 Makefile
 # 环境要求: Go 1.21+, Node 20+, Docker 24+, GNU Make (Windows需配 sh.exe)
 
-.PHONY: version init init-backend init-frontend run run-backend \
+.PHONY: version init init-backend init-frontend run run-backend run-frontend \
         test test-unit test-domain test-repo test-virt test-sqlite test-integration test-esxi test-auth \
         test-api test-e2e \
-        build build-backend \
+        build build-backend build-frontend \
         docker-build docker-build-backend docker-build-caddy docker-build-frontend \
         docker-push up down logs clean
 
@@ -70,7 +70,8 @@ init-frontend:
 		$(FRONTEND_DIR)/components/cards \
 		$(FRONTEND_DIR)/composables $(FRONTEND_DIR)/stores \
 		$(FRONTEND_DIR)/server/api/proxy
-	@echo "前端目录创建完成 (npm install 将在 Phase 7 执行)"
+	@cd $(FRONTEND_DIR) && if [ ! -d node_modules ]; then $(NPM) install --no-fund --no-audit; fi
+	@echo "前端依赖下载完成"
 
 # ------------------------------------------------------------------
 # 运行
@@ -79,6 +80,9 @@ run: run-backend
 
 run-backend:
 	@cd $(BACKEND_DIR) && $(GO) run ./cmd/server
+
+run-frontend:
+	@cd $(FRONTEND_DIR) && $(NPM) run dev
 
 # ------------------------------------------------------------------
 # 测试
@@ -131,6 +135,10 @@ build: build-backend
 build-backend:
 	@cd $(BACKEND_DIR) && CGO_ENABLED=0 $(GO) build -o $(BIN_DIR)/$(BIN_NAME) ./cmd/server
 	@echo "后端构建完成: $(BACKEND_DIR)/$(BIN_DIR)/$(BIN_NAME)"
+
+build-frontend:
+	@cd $(FRONTEND_DIR) && $(NPM) run build
+	@echo "前端构建完成: $(FRONTEND_DIR)/.output"
 
 # ------------------------------------------------------------------
 # Docker 构建与推送 (镜像推送在 Phase 10 启用)

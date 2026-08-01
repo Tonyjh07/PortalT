@@ -9,7 +9,7 @@ HomeLab 统一门户系统：在虚拟机中运行的 Web 门户，统一管理 
 | 层 | 技术 |
 |----|------|
 | 后端 | Go + Gin + GORM |
-| 前端 | Nuxt 3 + Vue 3 + Element Plus（Phase 7） |
+| 前端 | Nuxt 3 + Vue 3 + Element Plus |
 | 数据库 | PostgreSQL 15 / SQLite（调试部署） |
 | Web 服务器 | Caddy 2 |
 | 远程桌面 | Apache Guacamole |
@@ -21,8 +21,11 @@ HomeLab 统一门户系统：在虚拟机中运行的 Web 门户，统一管理 
 make version   # 检查工具链 (Go 1.21+, Node 20+, Docker 24+)
 make init      # 初始化目录结构与依赖
 make run       # 启动后端服务 (http://localhost:8080)
+make run-frontend  # 启动前端开发服务器 (http://localhost:3000)
 make test      # 运行测试（全量）
 ```
+
+前端开发服务器已配置 `/api` 代理到后端（含 WebSocket），直接访问 http://localhost:3000 登录即可。
 
 ### 认证
 
@@ -46,6 +49,7 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 | `JWT_SECRET` | 开发密钥 | 生产必须显式配置 |
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` | `900` / `604800`（秒） | 令牌有效期 |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 管理员引导账号 |
+| `GUAC_URL` | 空 | Guacamole WebSocket 隧道地址（未配置则远程桌面入口返回 503） |
 
 完整列表见 [.env.example](./.env.example)。
 
@@ -58,6 +62,7 @@ make test-sqlite      # SQLite 集成测试（免服务）
 make test-esxi        # ESXi 适配器（vcsim 模拟 vCenter）
 make test-integration # 全部适配器集成测试（PostgreSQL 需 docker compose up -d postgres）
 make test-race        # 竞态检测（需 MinGW）
+make build-frontend   # 前端生产构建（Nuxt .output）
 ```
 
 ## 项目结构
@@ -76,4 +81,6 @@ docs/       开发规范与接口文档
 - ✅ Phase 3：PostgreSQL 适配器 + SQLite（gormstore 共享层，零依赖调试）
 - ✅ Phase 4：ESXi 适配器（govmomi + vcsim 测试）+ Mock 提供者 + 工厂
 - ✅ Phase 5：认证与 JWT（bcrypt 本地认证、access/refresh 令牌、管理员引导）
-- ⬜ Phase 6+：核心 API（VM 管理/菜单/Guacamole）、前端等（见 About.md 进度表）
+- ✅ Phase 6：核心 API（VM 管理/动态菜单/插件管理/Guacamole WS 代理/RBAC）
+- ✅ Phase 7：前端（Nuxt 3 + Element Plus：登录、仪表盘、VM 管理、动态菜单、插件页、暗色主题）
+- ⬜ Phase 8+：Guacamole 浏览器远程桌面、插件系统、CI/CD（见 About.md 进度表）

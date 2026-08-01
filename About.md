@@ -439,6 +439,18 @@ npm run dev     # 浏览器访问 http://localhost:3000
 - 支持暗色/亮色切换
 - 自定义CSS变量（品牌色、字体）
 
+**验证结果（2026-08-01）**：`npm run build` 通过（Nuxt 3 + Element Plus，SSR 关闭的 SPA）；`npm run dev` 启动后经前端 `/api` 代理（nitro devProxy，含 ws）全链路实测：登录（admin）→ 菜单（空库 0 项）→ VM 列表（3 台 mock）→ stop/status/重复 stop 409/start → guac ws 未配置返回 503。
+
+**完成说明**：
+- 脚手架：`nuxt.config.ts`（SSR 关闭、`@element-plus/nuxt` 暗色主题、nitro devProxy `/api` → 后端 8080 含 WebSocket、`apiBase` 运行时配置）；dev 阶段前端 3000 端口直连后端
+- 认证：`composables/useAuth.ts`（access/refresh cookie + 用户状态）；`useApi.ts` 统一 API 客户端（`Authorization` 头注入 + 401 自动刷新重试一次 + 失败登出）；`middleware/auth` 路由守卫；`pages/login.vue`（表单校验 + 登录失败提示）；`layouts/auth.vue`（无菜单登录布局）
+- 布局：`layouts/default.vue`（可折叠侧栏 + 顶栏）；`SideMenu.vue` + 递归 `MenuItem.vue`（按 route 层级构建菜单树，支持二级）；`AppHeader.vue`（用户信息/角色标签/暗亮主题切换/登出）
+- 页面：`dashboard.vue`（VM 统计卡：总数/运行/核数/内存 + 最近 VM 表 + 快速启动插件入口）；`vms/index.vue`（表格：状态彩色标签、按状态禁用电源按钮、行点击进详情）；`vms/[id].vue`（详情 + 10s 状态轮询 + 电源操作 + 远程桌面 Phase 8 占位面板）；`plugins/[...slug].vue`（动态路由 iframe 嵌入插件页面）
+- 主题：`useTheme.ts`（亮/暗切换，`html.dark` + Element Plus dark vars，localStorage 持久化 + 跟随系统偏好）
+- 其他：`IconRenderer.vue`（`mdi:*` 图标名 → Element Plus 图标组件映射）；`utils/permissions.ts`（前端角色权限表，与后端 RBAC 对齐）；Dockerfile（node:22-alpine 多阶段构建）；Makefile 新增 `run-frontend`/`build-frontend`，`init-frontend` 执行 npm install
+
+**经验**：Nuxt nitro `devProxy` 会**剥离前缀**再转发（`/api/...` → 目标根），target 需写成 `http://localhost:8080/api`；`@element-plus/icons-vue` 组件自动导入不可靠，统一走 `IconRenderer` 映射；dev 代理含 ws 支持（Phase 8 Guacamole 通道复用同一入口）。
+
 ---
 
 ### Phase 8：Guacamole集成
@@ -687,7 +699,7 @@ DOMAIN=portal.yourlab.com
 | Phase 4: ESXi适配器 | ✅ 完成 | 2026-08-01 | govmomi + vcsim 模拟 vCenter，`make test-esxi` 通过；mock 提供者 + 工厂（VIRT_PROVIDER 切换） |
 | Phase 5: 认证与JWT | ✅ 完成 | 2026-08-01 | bcrypt 本地认证 + JWT（access 15m/refresh 7d）+ Gin 登录/刷新/me + 管理员引导，`make test-auth` + curl 实测通过 |
 | Phase 6: 核心API | ✅ 完成 | 2026-08-01 | VM 管理/状态轮询 + 动态菜单 + 插件管理 + Guacamole WS 代理 + RBAC 中间件；`make test-api` + curl 实测通过 |
-| Phase 7: 前端 | ⬜ 未开始 | - | - |
+| Phase 7: 前端 | ✅ 完成 | 2026-08-01 | Nuxt 3 + Element Plus：登录/仪表盘/VM 管理/动态菜单/插件页/暗色主题；`npm run build` + dev 代理链实测通过 |
 | Phase 8: Guacamole集成 | ⬜ 未开始 | - | - |
 | Phase 9: 插件系统 | ⬜ 未开始 | - | - |
 | Phase 10: CI/CD与部署 | ⬜ 未开始 | - | - |
