@@ -1,19 +1,9 @@
 import type { LoginResult, RefreshResult, User } from '~/types'
-
-const ACCESS_COOKIE = 'access_token'
-const REFRESH_COOKIE = 'refresh_token'
+import { ACCESS_COOKIE, ACCESS_MAX_AGE, REFRESH_COOKIE, REFRESH_MAX_AGE, readCookie, writeCookie } from '~/utils/cookies'
 
 export function useAuth() {
-  const accessToken = useCookie<string | null>(ACCESS_COOKIE, {
-    maxAge: 900,
-    sameSite: 'lax',
-    path: '/',
-  })
-  const refreshToken = useCookie<string | null>(REFRESH_COOKIE, {
-    maxAge: 7 * 24 * 3600,
-    sameSite: 'lax',
-    path: '/',
-  })
+  const accessToken = useState<string | null>('portalt-access-token', () => readCookie(ACCESS_COOKIE))
+  const refreshToken = useState<string | null>('portalt-refresh-token', () => readCookie(REFRESH_COOKIE))
   const user = useState<User | null>('portalt-user', () => null)
 
   const isAuthenticated = computed(() => !!accessToken.value)
@@ -24,6 +14,8 @@ export function useAuth() {
       method: 'POST',
       body: { username, password },
     })
+    writeCookie(ACCESS_COOKIE, res.access_token, ACCESS_MAX_AGE)
+    writeCookie(REFRESH_COOKIE, res.refresh_token, REFRESH_MAX_AGE)
     accessToken.value = res.access_token
     refreshToken.value = res.refresh_token
     user.value = res.user
@@ -38,6 +30,7 @@ export function useAuth() {
         method: 'POST',
         body: { refresh_token: refreshToken.value },
       })
+      writeCookie(ACCESS_COOKIE, res.access_token, ACCESS_MAX_AGE)
       accessToken.value = res.access_token
       return true
     } catch {
@@ -57,6 +50,8 @@ export function useAuth() {
   }
 
   function logout() {
+    writeCookie(ACCESS_COOKIE, null, 0)
+    writeCookie(REFRESH_COOKIE, null, 0)
     accessToken.value = null
     refreshToken.value = null
     user.value = null

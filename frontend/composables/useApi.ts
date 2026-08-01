@@ -1,5 +1,4 @@
 import { $fetch, type FetchOptions } from 'ofetch'
-import type { ApiResponse } from '~/types'
 
 let client: ReturnType<typeof $fetch.create> | null = null
 
@@ -14,6 +13,12 @@ export function useApi() {
         const { token } = useAuth()
         if (token.value && !options.headers?.Authorization) {
           options.headers = { ...options.headers, Authorization: `Bearer ${token.value}` }
+        }
+      },
+      onResponse({ response }) {
+        const body = response._data
+        if (body && typeof body === 'object' && 'code' in body && 'data' in body) {
+          response._data = body.data
         }
       },
       onResponseError: async ({ response, options, request }) => {
@@ -39,5 +44,5 @@ export function useApi() {
 
 export function apiRequest<T>(request: string, options?: FetchOptions) {
   const { api } = useApi()
-  return api<ApiResponse<T>>(request, options)
+  return api<T>(request, options)
 }

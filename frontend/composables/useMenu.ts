@@ -60,7 +60,7 @@ export function useMenu() {
   async function load() {
     const { api } = useApi()
     const res = await api<Plugin[]>('/menu')
-    items.value = buildMenuTree(res.data)
+    items.value = buildMenuTree(res)
     loaded.value = true
     return items.value
   }
