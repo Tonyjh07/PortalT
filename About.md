@@ -647,7 +647,7 @@ DOMAIN=portal.yourlab.com
 |------|------|---------|---------|
 | Phase 0: 基础设施 | ✅ 完成 | 2026-08-01 | `make version/init/run/build` 全部通过；Go 1.26.5 + Make 3.81 已安装（winget） |
 | Phase 1: 领域模型 | ✅ 完成 | 2026-08-01 | `make test-domain` 通过，覆盖率 100% |
-| Phase 2: 仓储接口与内存实现 | ⬜ 未开始 | - | - |
+| Phase 2: 仓储接口与内存实现 | ✅ 完成 | 2026-08-01 | `make test-repo` 通过（100%）；`make test-race` 通过（含并发检测） |
 | Phase 3: PostgreSQL适配器 | ⬜ 未开始 | - | - |
 | Phase 4: ESXi适配器 | ⬜ 未开始 | - | - |
 | Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
@@ -661,6 +661,7 @@ DOMAIN=portal.yourlab.com
 - **Go 模块名**：`portalt`（仓库无远端，未使用 github 路径）
 - **GOPROXY**：已持久化配置为 `https://goproxy.cn,direct`（默认 proxy.golang.org 在本网络无法访问，见 2026-08-01 下载失败记录）
 - **GNU Make**：Windows 下需 msys sh.exe 支持；npm 命令在 MSYS 环境使用 `npm.cmd`（Makefile 已自动处理）
+- **MinGW（-race 竞态检测）**：已装 WinLibs（winget `BrechtSanders.WinLibs.MCF.UCRT`）；msys64 cygwin gcc 位于机器 PATH 优先于用户 PATH，故 `make test-race` 自动探测 WinLibs gcc 路径并显式指定 CC
 - **控制台乱码**：GBK 控制台显示 UTF-8 中文输出会乱码，文件内容本身正确，建议终端使用 UTF-8 代码页
 
 ### 文档化规范

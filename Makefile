@@ -86,6 +86,10 @@ run-backend:
 test: test-unit
 	@echo "所有测试通过"
 
+# 原生 MinGW gcc（-race 需要）：自动探测 WinGet 安装的 WinLibs
+LOCALAPPDATA_FS := $(subst \\,/,$(LOCALAPPDATA))
+MINGW_GCC := $(firstword $(wildcard $(LOCALAPPDATA_FS)/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.MCF.UCRT_*/mingw64/bin/gcc.exe))
+
 test-unit: test-domain test-repo test-api
 
 test-domain:
@@ -93,6 +97,9 @@ test-domain:
 
 test-repo:
 	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/memory/... -count=1
+
+test-race:
+	@cd $(BACKEND_DIR) && CC="$(MINGW_GCC)" $(GO) test -race ./... -count=1
 
 test-integration:
 	@cd $(BACKEND_DIR) && $(GO) test -tags integration ./internal/adapters/... -count=1

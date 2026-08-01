@@ -38,6 +38,63 @@ GET /healthz
 - 响应：`200 OK`，正文 `PortalT v0.1`（text/plain）
 - 监听地址：`:8080`（backend/cmd/server/main.go）
 
+## 仓储接口（internal/ports/repository.go）
+
+```go
+type VMRepository interface {
+    Save(vm *domain.VM) error      // upsert语义
+    FindByID(id string) (*domain.VM, error)
+    FindAll() ([]*domain.VM, error)
+    Delete(id string) error
+}
+
+type UserRepository interface {
+    Save(user *domain.User) error
+    FindByID(id string) (*domain.User, error)
+    FindByUsername(username string) (*domain.User, error)
+    FindAll() ([]*domain.User, error)
+    Delete(id string) error
+}
+```
+
+- 记录不存在返回 `ports.ErrNotFound`；参数无效返回 `ports.ErrInvalidArgument`
+- 已实现：`internal/adapters/memory`（sync.RWMutex + map，100% 覆盖率，通过 -race）
+
+## 虚拟化提供者接口（internal/ports/virtualization.go）
+
+```go
+type VirtualizationProvider interface {
+    ListVMs() ([]*domain.VM, error)
+    StartVM(id string) error
+    StopVM(id string) error
+    RestartVM(id string) error
+    GetHostInfo() (*domain.HostInfo, error)
+}
+```
+
+- 实现计划：esxi（Phase 4）/ mock / proxmox
+- 领域服务经此接口编排，实现平台可移植
+
+## 业务服务（internal/domain/services/vm_service.go）
+
+| 方法 | 说明 |
+|------|------|
+| `SyncVMs(ctx)` | 从提供者拉取全部VM保存入库，删除提供者中已不存在的陈旧记录；提供者报错时不做任何变更 |
+| `ListVMs(ctx)` | 返回仓储中的全部VM |
+
+## HostInfo JSON 契约（internal/domain/host.go）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| name | string | 宿主机名称 |
+| version | string | 平台版本 |
+| cpu_model | string | CPU型号 |
+| total_cpu / used_cpu | int | CPU 总核数/已用 |
+| total_memory_mb / used_memory_mb | int | 内存（MB） |
+| status | string | connected / disconnected |
+
+辅助方法：`CPUUsagePercent()`、`MemoryUsagePercent()`（除零安全）。
+
 ## 领域模型 JSON 契约
 
 以下结构体通过 `encoding/json` 序列化，字段名即前端 API 契约（Phase 6 起生效）。
