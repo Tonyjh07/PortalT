@@ -1,10 +1,10 @@
 # PortalT 接口文档
 
-> 仅记录当前已实现的接口与契约（截至 Phase 1）。
+> 仅记录当前已实现的接口与契约（截至 Phase 5）。
 
-## 响应格式（规划约定）
+## 响应格式
 
-后续所有 REST API 统一采用以下格式（尚未实现，Phase 6 落地）：
+所有 REST API 统一采用以下格式（`internal/api/response` 包）：
 
 ```json
 { "code": 200, "message": "success", "data": { ... } }
@@ -13,18 +13,19 @@
 错误格式：
 
 ```json
-{ "code": 4001, "message": "invalid credentials", "details": "..." }
+{ "code": 4001, "message": "用户名或密码错误" }
 ```
 
-### 错误码范围（规划）
+### 已实现的错误码
 
-| 范围 | 含义 |
-|------|------|
-| 1000-1999 | 认证错误 |
-| 2000-2999 | 权限错误 |
-| 3000-3999 | VM 操作错误 |
-| 4000-4999 | 数据库错误 |
-| 5000-5999 | 虚拟化平台错误 |
+| 码 | 含义 | HTTP 状态 |
+|----|------|-----------|
+| 200 | 成功 | 200 |
+| 4001 | 用户名或密码错误 | 401 |
+| 4002 | 令牌无效或已过期 | 401 |
+| 4003 | 缺少访问令牌 | 401 |
+| 4004 | 请求参数错误 | 400 |
+| 5000 | 服务器内部错误 | 500 |
 
 ## 已实现 HTTP 接口
 
@@ -34,9 +35,60 @@
 GET /healthz
 ```
 
-- 说明：后端存活探针，Phase 0 提供
 - 响应：`200 OK`，正文 `PortalT v0.1`（text/plain）
-- 监听地址：`:8080`（backend/cmd/server/main.go）
+
+### 认证
+
+```
+POST /api/v1/auth/login
+```
+
+- 请求：`{"username":"admin","password":"admin123"}`
+- 响应：`{"access_token":"...","refresh_token":"...","expires_in":900,"user":{...}}`
+- 错误：4001 凭据无效（401）
+
+```
+POST /api/v1/auth/refresh
+```
+
+- 请求：`{"refresh_token":"..."}`
+- 响应：`{"access_token":"...","expires_in":900}`
+- 访问令牌不能用作刷新令牌（类型隔离）
+
+```
+GET /api/v1/auth/me
+```
+
+- 需 `Authorization: Bearer <access_token>`
+- 响应：当前用户信息（无密码字段）
+
+### 认证中间件（internal/api/middleware/auth.go）
+
+- `AuthRequired(tokenManager)`：解析 `Bearer` 头，成功后将用户存入 gin.Context
+- `CurrentUser(c)`：读取当前用户；未认证返回 nil
+- 失败统一返回 4002/4003
+
+## 认证接口（internal/ports/auth.go）
+
+```go
+type AuthenticationProvider interface {
+    Authenticate(username, password string) (*domain.User, error)
+}
+
+type TokenManager interface {
+    GenerateAccessToken(user *domain.User) (string, error)
+    GenerateRefreshToken(user *domain.User) (string, error)
+    ParseAccessToken(token string) (*domain.User, error)
+    ParseRefreshToken(token string) (*domain.User, error)
+    AccessTTL() time.Duration
+    RefreshTTL() time.Duration
+}
+```
+
+- 错误哨兵：`ports.ErrInvalidCredentials`、`ports.ErrInvalidToken`
+- 已实现：`internal/adapters/auth/local`（bcrypt，恒定时间比较防用户名枚举）
+- 已实现：`internal/adapters/auth/jwt`（HS256，access 15 分钟 / refresh 7 天，类型声明隔离）
+- 启动引导：`EnsureAdminUser(repo, ADMIN_USERNAME, ADMIN_PASSWORD)`（默认 admin/admin123，幂等）
 
 ## 仓储接口（internal/ports/repository.go）
 

@@ -41,6 +41,7 @@ go env -w GOPROXY=https://goproxy.cn,direct
 | `make test-virt` | Mock 虚拟化提供者 + 工厂测试 | ✅ 通过 |
 | `make test-sqlite` | SQLite 适配器集成测试（临时文件库，无需外部服务） | ✅ 通过 |
 | `make test-esxi` | ESXi 适配器集成测试（vcsim 内置模拟 vCenter，无需真实 ESXi） | ✅ 通过 |
+| `make test-auth` | 认证适配器 + API 层测试（登录/刷新/中间件） | ✅ 通过 |
 | `make test-race` | 全部单测 + 竞态检测（需 MinGW） | ✅ 通过 |
 | `make test-integration` | 全部适配器集成测试（SQLite 免服务；PostgreSQL 需 `docker compose up -d postgres`） | ✅ 通过 |
 | `make test` | 汇总测试（test-domain + test-repo + test-api） | ⏳ 依赖后续阶段 |
@@ -62,6 +63,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 - `internal/domain`：领域实体与业务方法，零外部依赖
 - `internal/ports`：仓储/虚拟化/认证接口定义 + 错误哨兵，无实现
+- `internal/api`：Gin 路由装配（router.go）；`internal/api/response` 统一响应格式（独立叶子包，供处理器与中间件共用，避免循环依赖）
+- `internal/api/middleware`：认证等中间件；`internal/api/v1`：接口处理器
+- `internal/adapters/auth`：本地密码认证（bcrypt）+ JWT 令牌管理（HS256）+ 管理员引导
 - `internal/adapters/memory`：内存仓储（测试/开发用），编译期断言实现接口（`var _ ports.VMRepository = (*VMRepository)(nil)`）
 - `internal/adapters/gormstore`：**方言无关**的 GORM 模型与仓储（postgres/sqlite 共用，单一事实来源）
 - `internal/adapters/postgres` / `sqlite`：薄包装 + 各自方言的 Open/Migrate；jsonb metadata 空值归一为 nil；upsert 用 `clause.OnConflict`
@@ -92,6 +96,13 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 - ESXi 适配器：`//go:build esxi` 标签 + govmomi 内置 vcsim 模拟器（`simulator.VPX()`），无需真实环境；`make test-esxi` 执行
 - Mock 提供者与工厂：无 tag 常驻单测，`make test-virt` 执行
+
+## API 测试约定
+
+- 认证适配器单测：内存仓储 + 手工过期/篡改令牌
+- API 端到端测试：`internal/api/auth_api_test.go`（完整路由 + 真实认证链），置于 `api` 包以避免 v1↔api 测试循环依赖
+- 中间件测试：可编程 TokenManager 桩（`internal/api/middleware/auth_test.go`）
+- `make test-auth` 覆盖以上全部；登录成功/失败/刷新/me/错误码均断言
 
 ## Docker 环境备注
 

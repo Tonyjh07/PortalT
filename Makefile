@@ -114,7 +114,7 @@ test-esxi:
 	@cd $(BACKEND_DIR) && $(GO) test -tags esxi ./internal/adapters/esxi/... -count=1
 
 test-auth:
-	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/auth/... ./internal/api/v1/... -count=1
+	@cd $(BACKEND_DIR) && $(GO) test ./internal/adapters/auth/... ./internal/api/... -count=1
 
 test-api:
 	@cd $(BACKEND_DIR) && $(GO) test ./internal/api/... -count=1

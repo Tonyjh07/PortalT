@@ -317,6 +317,17 @@ curl -X POST http://localhost:8080/api/v1/auth/login -d '{"username":"admin","pa
    - POST `/api/v1/auth/refresh` → 刷新token
 6. 注册管理员初始账号（通过环境变量 `ADMIN_USERNAME`/`ADMIN_PASSWORD` 在启动时创建）
 
+**验证结果（2026-08-01）**：`make test-auth` 通过（认证适配器 91.9% + API 层全绿）；curl 端到端实测：`/healthz` 200、登录返回双令牌、`/auth/me` 返回 admin 用户、refresh 换新 access token、错误密码 401+4001、无令牌 401+4003。
+
+**完成说明**：
+- `ports/auth.go`：`AuthenticationProvider`（Authenticate）+ `TokenManager`（签发/解析/TTL），错误哨兵 `ErrInvalidCredentials`/`ErrInvalidToken`
+- `adapters/auth/local.go`：bcrypt 哈希；用户不存在时用固定哈希做恒定时间比较，防用户名枚举；`EnsureAdminUser` 幂等引导（默认 admin/admin123）
+- `adapters/auth/jwt.go`：HS256，access 15 分钟 + refresh 7 天（`JWT_ACCESS_TTL`/`JWT_REFRESH_TTL` 秒级可配，`JWT_SECRET` 读取，缺省开发密钥）；令牌类型声明隔离（access 不能当 refresh 用）
+- `api/`：Gin 路由（响应统一 `{code,message,data}`，抽 `api/response` 叶子包防循环依赖）；`middleware.AuthRequired`（Bearer 解析）+ `v1.AuthHandler`（login/refresh/me）
+- `cmd/server/main.go`：完成依赖接线 —— OpenDBFromEnv → gormstore 仓储 → 认证/JWT → 管理员引导 → Gin 路由；`ADMIN_USERNAME`/`ADMIN_PASSWORD` 环境变量
+
+**经验**：`internal/api/v1` 测试引用 `internal/api` 会构成测试循环依赖，端到端测试置于 `api` 包（`auth_api_test.go`）解决；负 TTL 会被 JWT 管理器归为默认值，过期令牌测试需手工构造。
+
 ---
 
 ### Phase 6：核心API实现
@@ -662,7 +673,8 @@ DOMAIN=portal.yourlab.com
 | Phase 3: PostgreSQL适配器 | ✅ 完成 | 2026-08-01 | `make test-integration` 通过（docker compose PostgreSQL 15 + GORM，含 jsonb metadata 与并发 upsert） |
 | Phase 3.5: SQLite适配器 | ✅ 完成 | 2026-08-01 | 用户调试需求追加：纯Go驱动（glebarez/sqlite，无CGO），gormstore 共享仓储包，`make test-sqlite` 通过；`DB_DRIVER=sqlite` 切换 |
 | Phase 4: ESXi适配器 | ✅ 完成 | 2026-08-01 | govmomi + vcsim 模拟 vCenter，`make test-esxi` 通过；mock 提供者 + 工厂（VIRT_PROVIDER 切换） |
-| Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
+| Phase 5: 认证与JWT | ✅ 完成 | 2026-08-01 | bcrypt 本地认证 + JWT（access 15m/refresh 7d）+ Gin 登录/刷新/me + 管理员引导，`make test-auth` + curl 实测通过 |
+| Phase 6: 核心API | ⬜ 未开始 | - | - |
 | Phase 5: 认证与JWT | ⬜ 未开始 | - | - |
 | Phase 6: 核心API | ⬜ 未开始 | - | - |
 | Phase 7: 前端 | ⬜ 未开始 | - | - |

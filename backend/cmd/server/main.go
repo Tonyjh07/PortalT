@@ -1,14 +1,22 @@
-// PortalT 后端服务入口 (Phase 0)
+// PortalT 后端服务入口 (Phase 5)
 //
-// 程序入口，负责依赖注入与启动 HTTP 服务。
-// Phase 0 仅验证工具链与基础服务可运行，后续阶段将在此注入
-// 仓储、虚拟化提供者、认证等依赖。
+// 负责依赖装配：数据库（OpenDBFromEnv）→ 仓储 → 认证/JWT →
+// 管理员引导 → Gin 路由，最后启动 HTTP 服务。
 package main
 
 import (
-	"fmt"
+	"context"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"time"
+
+	"portalt/internal/adapters"
+	authadapter "portalt/internal/adapters/auth"
+	"portalt/internal/adapters/gormstore"
+	"portalt/internal/api"
+	"portalt/internal/api/v1"
 )
 
 const (
@@ -21,14 +29,61 @@ const (
 func main() {
 	log.Println("PortalT", AppVersion, "starting...")
 
-	// 健康检查接口，验证服务可用
-	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		fmt.Fprintf(w, "PortalT %s", AppVersion)
-	})
+	ctx := context.Background()
 
+	// 数据库与仓储
+	db, err := adapters.OpenDBFromEnv(ctx)
+	if err != nil {
+		log.Fatalf("数据库初始化失败: %v", err)
+	}
+	userRepo := gormstore.NewUserRepository(db)
+
+	// 认证与令牌
+	secret := envOr("JWT_SECRET", "")
+	tm := authadapter.NewJWTManager(secret,
+		envSeconds("JWT_ACCESS_TTL", 900),
+		envSeconds("JWT_REFRESH_TTL", 7*24*3600),
+	)
+	authProvider := authadapter.NewLocalProvider(userRepo)
+
+	// 管理员初始账号引导
+	if err := authadapter.EnsureAdminUser(ctx, userRepo,
+		envOr("ADMIN_USERNAME", "admin"),
+		envOr("ADMIN_PASSWORD", "admin123"),
+	); err != nil {
+		log.Fatalf("管理员账号引导失败: %v", err)
+	}
+	log.Printf("管理员账号已就绪（%s）", envOr("ADMIN_USERNAME", "admin"))
+
+	// 路由
+	api.AppVersion = AppVersion
+	router := api.NewRouter(tm, v1.NewAuthHandler(authProvider, tm))
+
+	srv := &http.Server{
+		Addr:              listenAddr,
+		Handler:           router,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	log.Printf("PortalT listening on %s", listenAddr)
-	if err := http.ListenAndServe(listenAddr, nil); err != nil {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("server exited: %v", err)
 	}
+}
+
+// envOr 读取环境变量，为空时返回默认值。
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// envSeconds 读取以秒为单位的环境变量，非法或空时返回默认值。
+func envSeconds(key string, fallback int64) time.Duration {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return time.Duration(n) * time.Second
+		}
+	}
+	return time.Duration(fallback) * time.Second
 }
