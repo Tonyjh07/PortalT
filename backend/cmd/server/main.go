@@ -124,7 +124,6 @@ func main() {
 		Guac:        guacHandler,
 		Native:      native,
 		NativeDeps: plugins.Deps{
-			VMs:      vmService,
 			Provider: envOr("VIRT_PROVIDER", "mock"),
 			WebURL:   envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
 		},

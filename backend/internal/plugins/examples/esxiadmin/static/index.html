@@ -5,230 +5,274 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ESXi 管理</title>
 <style>
-  :root { color-scheme: dark; }
+  :root { color-scheme: light; }
+  html.dark { color-scheme: dark; }
+
+  :root {
+    --bg: #f5f6fa;
+    --bg-glow-1: rgba(99, 102, 241, .12);
+    --bg-glow-2: rgba(34, 211, 238, .10);
+    --card: rgba(255, 255, 255, .85);
+    --card-border: #e5e7f0;
+    --text: #1c2130;
+    --text-2: #5b6478;
+    --text-3: #8a93a8;
+    --accent: #6366f1;
+    --accent-2: #22d3ee;
+    --code-bg: #1e2233;
+    --code-text: #d6dbe9;
+    --code-border: #2a2f45;
+    --ok: #22c55e;
+    --warn: #f59e0b;
+    --bad: #94a3b8;
+    --frame-bar: rgba(255, 255, 255, .8);
+    --shadow: 0 20px 50px -20px rgba(30, 41, 80, .25);
+  }
+
+  html.dark {
+    --bg: #0f1117;
+    --bg-glow-1: rgba(99, 102, 241, .22);
+    --bg-glow-2: rgba(34, 211, 238, .12);
+    --card: rgba(255, 255, 255, .04);
+    --card-border: rgba(255, 255, 255, .09);
+    --text: #e6e9f2;
+    --text-2: #9aa3b8;
+    --text-3: #6b7488;
+    --code-bg: #171a26;
+    --code-text: #c9d0e2;
+    --code-border: #242a3d;
+    --frame-bar: rgba(17, 19, 26, .8);
+    --shadow: 0 20px 50px -20px rgba(0, 0, 0, .6);
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
-    background: #141414; color: #e6e6e6;
-    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-    padding: 20px;
+    font: 14px/1.65 -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 32px 28px;
+    transition: background .3s, color .3s;
   }
-  h1 { font-size: 18px; margin-bottom: 16px; color: #fff; }
-  .notice {
-    background: #1e1e2e; border: 1px solid #3a3a5c; border-radius: 8px;
-    padding: 14px 18px; margin-bottom: 18px; font-size: 13px;
+  body::before, body::after {
+    content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 0;
   }
-  .notice h2 { margin: 0 0 8px; color: #fbbf24; font-size: 15px; }
-  .notice p { margin: 4px 0; color: #c9c9d6; }
-  .notice b { color: #fff; }
-  .notice pre {
-    background: #14141f; border: 1px solid #2d2d44; border-radius: 6px;
-    padding: 10px 12px; margin: 8px 0; font-size: 12px; overflow: auto;
+  body::before {
+    background: radial-gradient(600px 400px at 15% 0%, var(--bg-glow-1), transparent 65%),
+                radial-gradient(700px 500px at 100% 100%, var(--bg-glow-2), transparent 60%);
   }
-  .notice code { background: #14141f; border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  .wrap { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; }
+
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 26px; }
+  .logo {
+    width: 46px; height: 46px; border-radius: 14px; flex: none;
+    display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 10px 24px -8px var(--accent);
+  }
+  .logo svg { width: 24px; height: 24px; }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: .2px; }
+  header p { font-size: 13px; color: var(--text-2); }
+
+  .status {
+    display: flex; gap: 12px; align-items: flex-start;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 16px; padding: 22px 24px; backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
+  }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%; flex: none; margin-top: 6px;
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 18%, transparent);
+  }
+  .dot.ok { background: var(--ok); color: var(--ok); }
+  .dot.warn { background: var(--warn); color: var(--warn); }
+  .dot.bad { background: var(--bad); color: var(--bad); }
+  .status .body { flex: 1; }
+  .status h2 { font-size: 15px; font-weight: 600; }
+  .status p { font-size: 13px; color: var(--text-2); margin-top: 4px; }
+  .status p b { color: var(--text); font-weight: 600; }
+  .status .actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+
+  code {
+    font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    color: var(--code-text); border-radius: 6px; padding: 1px 6px;
+    font-size: 12.5px;
+  }
+  pre {
+    margin: 12px 0 0; padding: 14px 16px; overflow: auto;
+    background: var(--code-bg); border: 1px solid var(--code-border);
+    border-radius: 12px; font-size: 12.5px; line-height: 1.8;
+    color: var(--code-text);
+    font-family: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  }
+  pre .c { color: var(--text-3); }
+  pre .k { color: var(--accent-2); }
+  pre .s { color: #fbbf24; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 0; border-radius: 10px; padding: 8px 16px; font-size: 13px;
+    cursor: pointer; text-decoration: none; transition: transform .15s, opacity .15s;
+  }
+  .btn:hover { transform: translateY(-1px); }
+  .btn:active { transform: translateY(0); }
+  .btn-primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; font-weight: 600; box-shadow: 0 8px 20px -8px var(--accent);
+  }
+  .btn-ghost {
+    background: transparent; border: 1px solid var(--card-border); color: var(--text-2);
+  }
+  .btn-ghost:hover { color: var(--text); border-color: var(--accent); }
+
   .frame-wrap {
-    border: 1px solid #2e2e2e; border-radius: 8px; overflow: hidden;
-    background: #0d0d0d; margin-bottom: 18px;
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 16px; overflow: hidden; backdrop-filter: blur(12px);
+    box-shadow: var(--shadow);
   }
   .frame-bar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 8px 14px; background: #1c1c1c; border-bottom: 1px solid #2e2e2e;
-    font-size: 13px; color: #9d9d9d;
+    gap: 12px; padding: 10px 16px; font-size: 12.5px; color: var(--text-2);
+    background: var(--frame-bar); border-bottom: 1px solid var(--card-border);
   }
-  .frame-bar a { color: #60a5fa; text-decoration: none; }
+  .frame-bar .addr { font-family: Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .frame-bar a { color: var(--accent); text-decoration: none; flex: none; }
   .frame-bar a:hover { text-decoration: underline; }
-  .esxi-frame { width: 100%; height: 72vh; border: 0; display: block; }
-  details {
-    background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 8px;
-    padding: 10px 14px; margin-top: 18px;
-  }
-  summary { cursor: pointer; color: #9d9d9d; font-size: 13px; font-weight: 600; user-select: none; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
-  .card { background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 8px; padding: 12px 14px; }
-  .card .k { font-size: 12px; color: #8a8a8a; }
-  .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
-  th { color: #8a8a8a; font-weight: 500; }
-  td.name { font-weight: 600; }
-  .state { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
-  .state.on { background: #14331c; color: #4ade80; }
-  .state.off { background: #33231c; color: #fb923c; }
-  .state.sus { background: #2a2133; color: #c4b5fd; }
-  button {
-    background: #2d2d2d; color: #e6e6e6; border: 1px solid #3d3d3d;
-    border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
-  }
-  button:hover { background: #3a3a3a; }
-  button[disabled] { opacity: .45; cursor: not-allowed; }
-  .msg { margin-top: 14px; font-size: 13px; color: #fbbf24; }
-  .msg.err { color: #f87171; }
+  .esxi-frame { width: 100%; height: 74vh; border: 0; display: block; background: #fff; }
+
   .hidden { display: none; }
+  @media (max-width: 640px) {
+    body { padding: 20px 16px; }
+    .esxi-frame { height: 68vh; }
+  }
 </style>
 </head>
 <body>
-<h1>ESXi 管理（示例原生插件）</h1>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="4" width="20" height="14" rx="2"/>
+        <path d="M8 21h8M12 18v3"/>
+      </svg>
+    </div>
+    <div>
+      <h1>ESXi 管理</h1>
+      <p>在门户中直接访问 ESXi 内置 Web 管理界面</p>
+    </div>
+  </header>
 
-<!-- Web 管理界面 iframe（可嵌入时显示） -->
-<div class="frame-wrap hidden" id="frameWrap">
-  <div class="frame-bar">
-    <span id="frameTitle">ESXi Web 管理界面</span>
-    <a id="openNew" href="#" target="_blank" rel="noopener">在新窗口打开 ↗</a>
+  <div class="status hidden" id="status">
+    <span class="dot" id="statusDot"></span>
+    <div class="body">
+      <h2 id="statusTitle"></h2>
+      <div id="statusDesc"></div>
+      <div class="actions" id="statusActions"></div>
+    </div>
   </div>
-  <iframe class="esxi-frame" id="esxiFrame" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
-</div>
 
-<!-- 未连接 / 未配置提示 -->
-<div class="notice hidden" id="notice">
-  <h2 id="noticeTitle">ESXi 未连接</h2>
-  <div id="noticeBody"></div>
+  <div class="frame-wrap hidden" id="frameWrap">
+    <div class="frame-bar">
+      <span class="addr" id="frameAddr"></span>
+      <a id="openNew" href="#" target="_blank" rel="noopener">在新窗口打开</a>
+    </div>
+    <iframe class="esxi-frame" id="esxiFrame" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
+  </div>
 </div>
-
-<details id="tools">
-  <summary>宿主机信息 / 快速操作</summary>
-  <div class="cards" id="hostCards"></div>
-  <div class="msg hidden" id="msg"></div>
-  <table>
-    <thead><tr><th>名称</th><th>状态</th><th>IP</th><th>系统</th><th>CPU</th><th>内存</th><th>操作</th></tr></thead>
-    <tbody id="vmRows"></tbody>
-  </table>
-</details>
 
 <script>
 const API = '/api/v1/plugins/native/esxi-admin';
+const PROVIDER_CN = { esxi: 'VMware ESXi', workstation: 'VMware Workstation', mock: 'Mock（演示数据）' };
+
+// ---- 主题同步：读 localStorage portalt-theme（与 useTheme.ts 同键）----
+function applyTheme() {
+  const saved = localStorage.getItem('portalt-theme');
+  const dark = saved === 'dark'
+    || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', dark);
+}
+applyTheme();
+// 门户侧切换主题会写 localStorage → 跨同源 iframe 触发 storage 事件
+window.addEventListener('storage', e => { if (e.key === 'portalt-theme') applyTheme(); });
+// 兜底：直接观察父窗口 html.dark class（同源）
+try {
+  const parentEl = window.parent.document.documentElement;
+  if (parentEl && parentEl !== document.documentElement) {
+    new MutationObserver(() => {
+      const dark = parentEl.classList.contains('dark');
+      document.documentElement.classList.toggle('dark', dark);
+    }).observe(parentEl, { attributes: true, attributeFilter: ['class'] });
+  }
+} catch (e) { /* 跨域时忽略，storage 事件已兜底 */ }
 
 function token() {
   const m = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
   return m ? decodeURIComponent(m[1]) : '';
 }
 
-async function call(path, opts = {}) {
-  const res = await fetch(API + path, {
-    ...opts,
-    headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token() },
-  });
+async function call(path) {
+  const res = await fetch(API + path, { headers: { Authorization: 'Bearer ' + token() } });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.message || ('HTTP ' + res.status));
   return body.data;
 }
 
-const PROVIDER_CN = { esxi: 'VMware ESXi', workstation: 'VMware Workstation', mock: 'Mock（演示数据）' };
-
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
-async function renderConfig() {
-  const cfg = await call('/config');
-  const frameWrap = document.getElementById('frameWrap');
-  const notice = document.getElementById('notice');
-  const title = document.getElementById('noticeTitle');
-  const body = document.getElementById('noticeBody');
-  const providerCn = PROVIDER_CN[cfg.provider] || cfg.provider;
+const status = document.getElementById('status');
+const frameWrap = document.getElementById('frameWrap');
 
-  if (cfg.web_url) {
-    document.getElementById('esxiFrame').src = cfg.web_url;
-    document.getElementById('frameTitle').textContent =
-      'ESXi Web 管理界面（' + cfg.web_url + '）';
-    document.getElementById('openNew').href = cfg.web_url;
-    frameWrap.classList.remove('hidden');
-    notice.classList.add('hidden');
-  } else if (cfg.connected) {
-    // ESXi 已连接，但未配置可嵌入的 Web 界面地址
-    title.textContent = 'ESXi 已连接，未配置 Web 管理界面地址';
-    body.innerHTML =
-      '<p>当前为 <b>' + esc(providerCn) + '</b>，但缺少 Web 界面地址，无法 iframe 嵌入。</p>' +
-      '<p>在 <code>backend/.env</code> 中配置：</p>' +
-      '<pre>ESXI_WEB_URL=https://&lt;esxi-host&gt;/ui/   # 覆盖自动推导</pre>' +
-      '<p>不配置时会从 <code>VIRT_URL</code> 自动推导（<code>https://&lt;esxi-host&gt;/ui/</code>）。修改后重启后端。</p>';
-    frameWrap.classList.add('hidden');
-    notice.classList.remove('hidden');
-  } else {
-    title.textContent = 'ESXi 未连接';
-    body.innerHTML =
-      '<p>当前虚拟化平台为 <b>' + esc(providerCn) + '</b>，暂无 ESXi Web 界面可嵌入。</p>' +
-      '<p>连接真实 ESXi 的配置方式（<code>backend/.env</code>）：</p>' +
-      '<pre>VIRT_PROVIDER=esxi\n' +
-      'VIRT_URL=https://&lt;esxi-host&gt;/sdk\n' +
-      'VIRT_USERNAME=&lt;账号&gt;\n' +
-      'VIRT_PASSWORD=&lt;密码&gt;\n' +
-      'VIRT_INSECURE=true   # 自签名证书时设为 true</pre>' +
-      '<p>修改后重启后端：<code>go run ./cmd/server</code>。Web 界面地址默认从 <code>VIRT_URL</code> 推导，' +
-      '也可用 <code>ESXI_WEB_URL</code> 覆盖。下方"宿主机信息"仍会展示当前平台的真实数据。</p>';
-    frameWrap.classList.add('hidden');
-    notice.classList.remove('hidden');
-  }
+function showStatus(kind, title, descHtml, actionsHtml) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'dot ' + kind;
+  document.getElementById('statusTitle').textContent = title;
+  document.getElementById('statusDesc').innerHTML = descHtml;
+  document.getElementById('statusActions').innerHTML = actionsHtml;
+  status.classList.remove('hidden');
 }
 
-function msg(text, isErr) {
-  const el = document.getElementById('msg');
-  el.classList.remove('hidden');
-  el.classList.toggle('err', !!isErr);
-  el.textContent = text;
-  setTimeout(() => el.classList.add('hidden'), 3000);
+function openFrame(url) {
+  document.getElementById('esxiFrame').src = url;
+  document.getElementById('frameAddr').textContent = url;
+  document.getElementById('openNew').href = url;
+  document.getElementById('frameAddr').title = url;
+  status.classList.add('hidden');
+  frameWrap.classList.remove('hidden');
 }
 
-function stateCls(s) {
-  const v = String(s || '').toLowerCase();
-  if (v === 'poweredon') return 'on';
-  if (v === 'poweredoff') return 'off';
-  return 'sus';
-}
-
-const STATE_CN = { poweredon: '运行中', poweredoff: '已关机', suspended: '挂起' };
-
-async function renderHost() {
+async function render() {
   try {
-    const info = await call('/host');
-    const items = [
-      ['产品', info.product], ['版本', info.version], ['CPU', info.cpu_model],
-      ['核心数', info.total_cpu + ' 核'], ['内存', (info.total_memory_mb / 1024).toFixed(0) + ' GB'],
-      ['主机名', info.name], ['状态', info.status], ['厂商', info.vendor],
-    ];
-    document.getElementById('hostCards').innerHTML = items
-      .filter(([, v]) => v !== undefined && v !== null && v !== '')
-      .map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`)
-      .join('');
+    const cfg = await call('/config');
+    const cn = PROVIDER_CN[cfg.provider] || cfg.provider;
+
+    if (cfg.web_url) {
+      openFrame(cfg.web_url);
+      return;
+    }
+    if (cfg.connected) {
+      showStatus('warn', '已连接，缺少 Web 界面地址',
+        `<p>当前平台为 <b>${esc(cn)}</b>，但未配置可嵌入的管理界面。在 <code>backend/.env</code> 配置 <code>ESXI_WEB_URL</code>，或不配置时从 <code>VIRT_URL</code> 自动推导：</p>` +
+        `<pre><span class="k">ESXI_WEB_URL</span>=https://&lt;esxi-host&gt;/ui/   <span class="c"># 默认: VIRT_URL 的 /sdk → /ui/</span></pre>`,
+        `<a class="btn btn-primary" href="/plugins/esxi-admin" onclick="setTimeout(()=>location.reload(),600)">重新加载</a>`);
+      return;
+    }
+    showStatus('bad', 'ESXi 未连接',
+      `<p>当前虚拟化平台为 <b>${esc(cn)}</b>，暂无 ESXi Web 界面可嵌入。连接真实 ESXi 的配置方式（<code>backend/.env</code>）：</p>` +
+      `<pre><span class="k">VIRT_PROVIDER</span>=esxi
+<span class="k">VIRT_URL</span>=<span class="s">https://&lt;esxi-host&gt;/sdk</span>
+<span class="k">VIRT_USERNAME</span>=<span class="s">&lt;账号&gt;</span>
+<span class="k">VIRT_PASSWORD</span>=<span class="s">&lt;密码&gt;</span>
+<span class="k">VIRT_INSECURE</span>=true   <span class="c"># 自签名证书时设为 true</span></pre>
+      <p>Web 界面地址默认从 <code>VIRT_URL</code> 推导，也可用 <code>ESXI_WEB_URL</code> 覆盖。修改后重启后端：<code>go run ./cmd/server</code>。</p>`,
+      `<button class="btn btn-ghost" onclick="location.reload()">重新检测</button>`);
   } catch (e) {
-    document.getElementById('hostCards').innerHTML =
-      `<div class="card"><div class="k">宿主机</div><div class="v" style="color:#f87171">${esc(e.message)}</div></div>`;
+    showStatus('warn', '配置加载失败', `<p>${esc(e.message)}</p>`,
+      `<button class="btn btn-ghost" onclick="location.reload()">重试</button>`);
   }
 }
 
-async function renderVMs() {
-  try {
-    const vms = await call('/vms');
-    document.getElementById('vmRows').innerHTML = vms.map(vm => {
-      const cls = stateCls(vm.state);
-      const ops = cls === 'on'
-        ? `<button onclick="power('${vm.id}','stop')">关机</button> <button onclick="power('${vm.id}','restart')">重启</button>`
-        : `<button onclick="power('${vm.id}','start')">开机</button>`;
-      return `<tr>
-        <td class="name">${esc(vm.name)}</td>
-        <td><span class="state ${cls}">${esc(STATE_CN[vm.state] || vm.state)}</span></td>
-        <td>${esc(vm.ip)}</td><td>${esc(vm.os)}</td>
-        <td>${esc(vm.cpu)}</td><td>${esc(vm.memory)} MB</td>
-        <td>${ops}</td></tr>`;
-    }).join('');
-  } catch (e) {
-    msg('加载 VM 列表失败: ' + e.message, true);
-  }
-}
-
-async function power(id, op) {
-  try {
-    await call(`/vms/${id}/${op}`, { method: 'POST' });
-    msg('操作已下发');
-    renderVMs();
-  } catch (e) {
-    msg('操作失败: ' + e.message, true);
-  }
-}
-
-renderConfig().catch(e => {
-  document.getElementById('noticeTitle').textContent = '配置加载失败';
-  document.getElementById('noticeBody').innerHTML = '<p>' + esc(e.message) + '</p>';
-  document.getElementById('notice').classList.remove('hidden');
-});
-renderHost();
-renderVMs();
+render();
 </script>
 </body>
 </html>

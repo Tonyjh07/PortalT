@@ -10,7 +10,6 @@
 package plugins
 
 import (
-	"context"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -24,24 +23,12 @@ import (
 
 // Deps 原生插件可用的门户依赖（按需取用，勿持有跨请求状态）。
 type Deps struct {
-	// VMs 虚拟机服务（列表/电源操作/宿主机信息），esxi-admin 等插件使用
-	VMs VMServiceFacade
 	// Provider 当前虚拟化平台类型（esxi / workstation / mock），
 	// 供插件展示平台状态与配置指引
 	Provider string
 	// WebURL 目标平台 Web 管理界面地址（如 ESXi 的 https://host/ui/），
 	// 供 iframe 类插件嵌入；为空表示未配置
 	WebURL string
-}
-
-// VMServiceFacade 暴露给原生插件的虚拟机能力子集。
-type VMServiceFacade interface {
-	GetVMStatus(ctx context.Context, id string) (*domain.VM, error)
-	ListVMs(ctx context.Context) ([]*domain.VM, error)
-	StartVM(ctx context.Context, id string) (*domain.VM, error)
-	StopVM(ctx context.Context, id string) (*domain.VM, error)
-	RestartVM(ctx context.Context, id string) (*domain.VM, error)
-	GetHostInfo(ctx context.Context) (*domain.HostInfo, error)
 }
 
 // Plugin 原生插件接口。
