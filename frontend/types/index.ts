@@ -9,6 +9,18 @@ export interface User {
   role: Role
 }
 
+export interface RoleDefinition {
+  id: string
+  name: string
+  description: string
+  permissions: string[]
+}
+
+export interface PermissionInfo {
+  id: string
+  description: string
+}
+
 export interface VM {
   id: string
   name: string
@@ -26,12 +38,24 @@ export interface VMStatusResult {
   status: VMStatus
 }
 
+export type PluginType = 'iframe' | 'proxy' | 'native'
+
+export interface PluginEndpoint {
+  method: string
+  path: string
+  name: string
+  description: string
+}
+
 export interface Plugin {
   id: string
   name: string
   icon: string
   route: string
+  type: PluginType
   iframe_url: string
+  api_url: string
+  endpoints: PluginEndpoint[]
   permission: string
   sort_order: number
   is_active: boolean

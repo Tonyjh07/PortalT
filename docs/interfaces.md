@@ -1,6 +1,6 @@
 # PortalT 接口文档
 
-> 仅记录当前已实现的接口与契约（截至 Phase 8）。
+> 仅记录当前已实现的接口与契约（截至 Phase 9）。
 
 ## 响应格式
 
@@ -28,6 +28,7 @@
 | 4005 | 权限不足 | 403 |
 | 4006 | 资源不存在 | 404 |
 | 4007 | 操作在当前状态不允许 | 409 |
+| 4008 | 资源冲突（如用户名已存在） | 409 |
 | 5000 | 服务器内部错误 | 500 |
 
 ## 已实现 HTTP 接口
@@ -89,18 +90,64 @@ GET /api/v1/menu
 
 - 需 `plugin:view`（viewer 角色无此权限 → 403）
 - 返回当前用户可见的已启用插件，按 `sort_order` 升序
-- 过滤规则（`domain.Plugin.CanAccess`）：插件已启用 + 无 `permission` 要求或用户具备对应权限
+- 过滤规则：插件已启用 + 无 `permission` 要求或用户具备对应权限；权限集合优先取角色矩阵
+  （`AttachPermissions` 中间件），未加载时回退 `Plugin.CanAccess` 的内置表
 
 ### 插件管理（需认证 + `plugin:manage`，仅管理员）
 
 ```
 GET    /api/v1/plugins     → 全部插件（含停用）
-POST   /api/v1/plugins     → 注册插件（name/route 必填，自动生成ID）
+POST   /api/v1/plugins     → 注册插件（id 可选，缺省自动生成；name/route 必填）
 PUT    /api/v1/plugins/:id → 更新插件（全字段覆盖）
-DELETE /api/v1/plugins/:id → 删除插件
+DELETE /api/v1/plugins/:id → 删除插件（native 类型插件由代码托管，不建议删除）
 ```
 
-- 请求体：`{"name","icon","route","iframe_url","permission","sort_order","is_active"}`
+- 请求体：`{"id","name","icon","route","type","iframe_url","api_url","endpoints","permission","sort_order","is_active"}`
+- `type`：`iframe`（嵌入页面，默认）/ `proxy`（脚本标准 API 代理）/ `native`（Go 原生插件）
+- `proxy` 类型必填 `api_url`（http/https）与 `endpoints`（方法+路径白名单，路径以 `/` 开头）
+- `native` 类型不能通过接口创建，由启动时 `SyncNativePlugins` 按代码注册表 upsert（保留管理员对权限/启用状态的设置）
+
+### 脚本插件标准 API 代理（需认证 + `plugin:view`）
+
+```
+GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
+```
+
+- 仅转发插件 `endpoints` 白名单内的端点（方法+路径精确匹配，路径忽略前导斜杠），其余 404
+- 转发目标：`api_url + path`（保留 query/body/Content-Type），注入 `X-PortalT-User` / `X-PortalT-Role` 头
+- 响应**不带信封**：状态码、响应头、body 原样透传（目标不可达 → 502）
+- 插件未启用 → 403；插件不存在 → 404
+
+### 原生插件（需认证 + `plugin:view`，Phase 9）
+
+- API：`/api/v1/plugins/native/:pluginId/...`（路由由插件自身 `Mount` 挂载；插件在 plugins 表中
+  不存在或已停用 → 404）
+- 静态前端：`/native/:pluginId/`（公开托管内嵌页，数据访问一律走鉴权 API；前端 iframe 用
+  `/native/<id>/` 嵌入）
+- 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `VMServiceFacade`（ListVMs/电源操作/GetHostInfo）
+- 示例插件 `esxi-admin`（`internal/plugins/examples/esxiadmin`）：宿主信息 + VM 快捷电源操作
+
+### 用户管理（需认证 + `user:manage`，管理员）
+
+```
+GET    /api/v1/users     → 全部用户
+POST   /api/v1/users     → 创建用户（username/password 必填，同名 409/4008）
+PUT    /api/v1/users/:id → 更新用户（role/email；password 可选，留空不修改）
+DELETE /api/v1/users/:id → 删除用户（不能删除自己）
+```
+
+### 角色权限（需认证 + `user:manage`，管理员）
+
+```
+GET    /api/v1/roles           → 全部角色（内置 admin/user/viewer + 自定义）
+GET    /api/v1/roles/permissions → 权限字典（9 项，中文描述）
+PUT    /api/v1/roles/:id       → 更新角色权限集合（内置角色可改，删除 403）
+DELETE /api/v1/roles/:id       → 删除角色（内置角色不可删）
+```
+
+- 启动时 `EnsureDefaultRoles` 幂等写入内置三角色种子；`RoleLoader` 缓存角色→权限矩阵，
+  权限变更后 `Invalidate` 使缓存失效
+- `RequirePermission` 校验顺序：`auth.perms`（角色矩阵）→ 回退 `user.HasPermission`（内置表）
 
 ### 远程桌面隧道（需认证，Phase 8）
 
@@ -138,7 +185,15 @@ GET /api/v1/guac/ws/:vmId
 ### RBAC 中间件（internal/api/middleware/rbac.go）
 
 - `RequirePermission(perm)`：需在 `AuthRequired` 之后使用
+- 校验顺序：`auth.perms`（`AttachPermissions` 加载的角色矩阵）→ 回退 `user.HasPermission`（内置表）
 - 用户无对应权限或未认证 → 403/4005（权限常量见 `internal/domain/permission.go`）
+- `RequireAnyPermission(perms...)`：满足任一权限即通过
+
+### 角色加载中间件（internal/api/middleware/role_loader.go）
+
+- `RoleLoader`：缓存角色→权限集合（启动预载默认角色，`PermissionsFor` 懒加载未命中角色）
+- `AttachPermissions(loader)`：将当前用户权限集合写入 gin.Context（`auth.perms`），`CurrentPerms(c)` 读取
+- `Invalidate(role)`：角色更新后调用，下次请求重新加载
 
 ### 认证中间件（internal/api/middleware/auth.go）
 
@@ -317,12 +372,27 @@ type PluginRepository interface {
 | name | string | 显示名称 |
 | icon | string | 图标标识（如 mdi:home） |
 | route | string | 前端路由 |
-| iframe_url | string | 嵌入地址 |
+| type | string | iframe / proxy / native（空=iframe） |
+| iframe_url | string | 嵌入地址（iframe 类型） |
+| api_url | string | 插件 API 服务地址（proxy 类型） |
+| endpoints | array | 端点白名单 `[{method, path, name, description}]`（proxy 类型） |
 | permission | string | 访问所需权限，空=无需权限 |
 | sort_order | int | 排序权重（小在前） |
 | is_active | bool | 是否启用 |
 
-业务方法：`CanAccess(user *User) bool`（启用 + 权限双检查）、`IsEnabled()`。
+业务方法：`CanAccess(user *User)`（启用 + 权限双检查）、`IsEnabled()`、`FindEndpoint(method, path)`（白名单匹配，路径忽略前导斜杠）。
+
+### RoleDefinition（internal/domain/role.go）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | string | 角色 ID（admin / user / viewer / 自定义） |
+| name | string | 显示名称 |
+| description | string | 描述 |
+| permissions | array | 权限 ID 集合 |
+
+- 内置角色：admin（全部权限）、user（VM 电源 + plugin:view）、viewer（仅查看）
+- `domain.Role` 为用户实体上的角色类型（string）；权限实体为 `RoleDefinition`，两者不冲突
 
 ## 权限常量（internal/domain/permission.go）
 
@@ -338,7 +408,10 @@ type PluginRepository interface {
 | PERM_PLUGIN_MANAGE | plugin:manage | 管理插件 |
 | PERM_USER_MANAGE | user:manage | 管理用户 |
 
-### 角色权限矩阵（已实现）
+### 角色权限矩阵
+
+内置三角色为种子数据（启动幂等写入），`admin` 全权限；`user` 具备 VM 电源操作与插件查看；
+`viewer` 仅查看。**矩阵可在角色管理界面动态调整**（`PUT /roles/:id`），不再局限于下表：
 
 | 权限 | admin | user | viewer |
 |------|:-----:|:----:|:------:|
@@ -347,17 +420,20 @@ type PluginRepository interface {
 | plugin:view | ✅ | ✅ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
 
-## 数据库表结构（backend/migrations/001_init.up.sql）
+## 数据库表结构（backend/migrations/）
 
 | 表 | 关键字段 | 说明 |
 |----|---------|------|
 | users | id(PK), username(UNIQUE), password_hash, email, role, created_at | 用户账号 |
 | vms | id(PK), name, status, cpu, memory_mb, ip_address, host, metadata(JSONB), created_at, updated_at | 虚拟机目录 |
-| plugins | id(PK), name, icon, route(UNIQUE), iframe_url, permission, sort_order, is_active, created_at, updated_at | 插件菜单 |
+| plugins | id(PK), name, icon, route(UNIQUE), type, iframe_url, api_url, endpoints, permission, sort_order, is_active, created_at, updated_at | 插件菜单（Phase 9 扩展 type/api_url/endpoints） |
+| roles | id(PK), name, description, permissions(JSON 数组), created_at, updated_at | 角色权限矩阵（Phase 9，迁移 002） |
 | permissions | id(PK), name(UNIQUE), description, created_at | 权限字典（预留） |
+| schema_migrations | version(PK), applied_at | 迁移版本追踪（已应用迁移自动跳过，幂等启动） |
 
-- 迁移脚本：`001_init.up.sql` / `001_init.down.sql`，由 `postgres.Migrate(db, dir)` 按文件名顺序执行
-- SQLite 方言迁移：`migrations/sqlite/001_init.{up,down}.sql`（metadata 用 TEXT 存 JSON，is_active 用 0/1）
+- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types`（{up,down}.sql），按文件名顺序执行
+- SQLite 方言迁移：`migrations/sqlite/`（`003` 的 ALTER ADD COLUMN 在 SQLite 无 IF NOT EXISTS，
+  旧库重放报 "duplicate column name" 由迁移器视为已应用，兼容无版本表时期的存量库）
 - `make test-integration` 自动应用迁移后测试；`TEST_DATABASE_URL` 可覆盖连接
 
 ## 数据库工厂（internal/adapters/db.go）

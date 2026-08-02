@@ -9,6 +9,7 @@ import (
 	"portalt/internal/api/response"
 	"portalt/internal/api/v1"
 	"portalt/internal/domain"
+	"portalt/internal/plugins"
 	"portalt/internal/ports"
 )
 
@@ -17,11 +18,19 @@ var AppVersion = "v0.1"
 
 // HandlerSet 路由所需的全部处理器。
 type HandlerSet struct {
-	Auth   *v1.AuthHandler
-	VM     *v1.VMHandler
-	Menu   *v1.MenuHandler
-	Plugin *v1.PluginHandler
-	Guac   v1.GuacProxy
+	Auth        *v1.AuthHandler
+	VM          *v1.VMHandler
+	Menu        *v1.MenuHandler
+	Plugin      *v1.PluginHandler
+	PluginProxy *v1.PluginProxyHandler
+	User        *v1.UserHandler
+	Role        *v1.RoleHandler
+	Guac        v1.GuacProxy
+
+	// 原生插件（可选，nil 时相关路由不挂载）
+	Native     *plugins.Registry
+	NativeDeps plugins.Deps
+	PluginRepo ports.PluginRepository
 }
 
 // NewRouter 装配全部路由与中间件。
@@ -46,6 +55,9 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 	// 受保护路由
 	protected := v1g.Group("")
 	protected.Use(middleware.AuthRequired(tm))
+	if hs.Role != nil && hs.Role.Loader() != nil {
+		protected.Use(middleware.AttachPermissions(hs.Role.Loader()))
+	}
 	{
 		authG2 := protected.Group("/auth")
 		authG2.GET("/me", hs.Auth.Me)
@@ -68,6 +80,33 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		plugins.POST("", hs.Plugin.Create)
 		plugins.PUT("/:id", hs.Plugin.Update)
 		plugins.DELETE("/:id", hs.Plugin.Delete)
+
+		// 脚本插件标准 API 代理（plugin:view + 插件自身权限 + 端点白名单）
+		if hs.PluginProxy != nil {
+			proxy := protected.Group("/plugin-proxy", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW))
+			proxy.Any("/:pluginId/*path", hs.PluginProxy.Proxy)
+		}
+
+		// 原生插件 API（plugin:view + 插件启用闸门；路由由插件自身挂载）
+		if hs.Native != nil && hs.PluginRepo != nil {
+			nativeG := protected.Group("/plugins/native", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW))
+			hs.Native.MountAPI(nativeG, hs.NativeDeps, hs.PluginRepo)
+			hs.Native.MountStatic(router)
+		}
+
+		// 用户管理（user:manage，管理员）
+		users := protected.Group("/users", middleware.RequirePermission(domain.PERM_USER_MANAGE))
+		users.GET("", hs.User.List)
+		users.POST("", hs.User.Create)
+		users.PUT("/:id", hs.User.Update)
+		users.DELETE("/:id", hs.User.Delete)
+
+		// 角色权限（user:manage，管理员）
+		roles := protected.Group("/roles", middleware.RequirePermission(domain.PERM_USER_MANAGE))
+		roles.GET("", hs.Role.List)
+		roles.GET("/permissions", hs.Role.Permissions)
+		roles.PUT("/:id", hs.Role.Update)
+		roles.DELETE("/:id", hs.Role.Delete)
 
 		// Guacamole 远程桌面代理（vm:view）
 		if hs.Guac != nil {

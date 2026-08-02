@@ -104,6 +104,15 @@ func (s *VMService) RestartVM(ctx context.Context, id string) (*domain.VM, error
 	})
 }
 
+// GetHostInfo 返回宿主机信息（由提供者直接上报，无缓存）。
+func (s *VMService) GetHostInfo(ctx context.Context) (*domain.HostInfo, error) {
+	info, err := s.provider.GetHostInfo()
+	if err != nil {
+		return nil, fmt.Errorf("get host info: %w", err)
+	}
+	return info, nil
+}
+
 // GetVMStatus 获取虚拟机实时状态（轮询用）。
 // 优先从提供者查询最新状态并回写仓储；提供者不可达时回退到仓储缓存。
 func (s *VMService) GetVMStatus(ctx context.Context, id string) (*domain.VM, error) {

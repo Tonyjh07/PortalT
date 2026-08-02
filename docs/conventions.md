@@ -84,6 +84,12 @@ go env -w GOPROXY=https://goproxy.cn,direct
 
 切换示例：`DB_DRIVER=sqlite DB_DSN=./portalt.db make run`（main.go 接线在 Phase 5/6 落地）。
 
+**迁移约定（Phase 9 起）**：
+- 已应用迁移记录在 `schema_migrations(version)` 表，启动重复执行自动跳过（幂等）
+- 新迁移编号顺延（如 `004_xxx.{up,down}.sql`），postgres 与 sqlite 方言各写一份
+- 存量库兼容：postgres 用 `ADD COLUMN IF NOT EXISTS`；sqlite 无此语法，旧库重放报
+  "duplicate column name" 由迁移器视为已应用（见 `internal/adapters/sqlite/db.go`）
+
 ## 集成测试约定
 
 - PostgreSQL：`docker compose up -d postgres`（默认凭据 portalt/securepassword），`TEST_DATABASE_URL` 覆盖

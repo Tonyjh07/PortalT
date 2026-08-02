@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ESXi 管理</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #141414; color: #e6e6e6;
+    font: 14px/1.6 -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+    padding: 20px;
+  }
+  h1 { font-size: 18px; margin-bottom: 16px; color: #fff; }
+  h2 { font-size: 14px; margin: 18px 0 10px; color: #9d9d9d; font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .card { background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 8px; padding: 12px 14px; }
+  .card .k { font-size: 12px; color: #8a8a8a; }
+  .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a2a2a; font-size: 13px; }
+  th { color: #8a8a8a; font-weight: 500; }
+  td.name { font-weight: 600; }
+  .state { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+  .state.on { background: #14331c; color: #4ade80; }
+  .state.off { background: #33231c; color: #fb923c; }
+  .state.sus { background: #2a2133; color: #c4b5fd; }
+  button {
+    background: #2d2d2d; color: #e6e6e6; border: 1px solid #3d3d3d;
+    border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+  }
+  button:hover { background: #3a3a3a; }
+  button[disabled] { opacity: .45; cursor: not-allowed; }
+  .msg { margin-top: 14px; font-size: 13px; color: #fbbf24; }
+  .msg.err { color: #f87171; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>ESXi 管理（示例原生插件）</h1>
+
+<h2>宿主机</h2>
+<div class="cards" id="hostCards"></div>
+
+<h2>虚拟机</h2>
+<div class="msg hidden" id="msg"></div>
+<table>
+  <thead><tr><th>名称</th><th>状态</th><th>IP</th><th>系统</th><th>CPU</th><th>内存</th><th>操作</th></tr></thead>
+  <tbody id="vmRows"></tbody>
+</table>
+
+<script>
+const API = '/api/v1/plugins/native/esxi-admin';
+
+function token() {
+  const m = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : '';
+}
+
+async function call(path, opts = {}) {
+  const res = await fetch(API + path, {
+    ...opts,
+    headers: { ...(opts.headers || {}), Authorization: 'Bearer ' + token() },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.message || ('HTTP ' + res.status));
+  return body.data;
+}
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function msg(text, isErr) {
+  const el = document.getElementById('msg');
+  el.classList.remove('hidden');
+  el.classList.toggle('err', !!isErr);
+  el.textContent = text;
+  setTimeout(() => el.classList.add('hidden'), 3000);
+}
+
+function stateCls(s) {
+  const v = String(s || '').toLowerCase();
+  if (v === 'poweredon') return 'on';
+  if (v === 'poweredoff') return 'off';
+  return 'sus';
+}
+
+const STATE_CN = { poweredon: '运行中', poweredoff: '已关机', suspended: '挂起' };
+
+async function renderHost() {
+  try {
+    const info = await call('/host');
+    const items = [
+      ['产品', info.product], ['版本', info.version], ['CPU', info.cpu_model],
+      ['核心数', info.total_cpu + ' 核'], ['内存', (info.total_memory_mb / 1024).toFixed(0) + ' GB'],
+      ['主机名', info.name], ['状态', info.status], ['厂商', info.vendor],
+    ];
+    document.getElementById('hostCards').innerHTML = items
+      .filter(([, v]) => v !== undefined && v !== null && v !== '')
+      .map(([k, v]) => `<div class="card"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`)
+      .join('');
+  } catch (e) {
+    document.getElementById('hostCards').innerHTML =
+      `<div class="card"><div class="k">宿主机</div><div class="v" style="color:#f87171">${esc(e.message)}</div></div>`;
+  }
+}
+
+async function renderVMs() {
+  try {
+    const vms = await call('/vms');
+    document.getElementById('vmRows').innerHTML = vms.map(vm => {
+      const cls = stateCls(vm.state);
+      const ops = cls === 'on'
+        ? `<button onclick="power('${vm.id}','stop')">关机</button> <button onclick="power('${vm.id}','restart')">重启</button>`
+        : `<button onclick="power('${vm.id}','start')">开机</button>`;
+      return `<tr>
+        <td class="name">${esc(vm.name)}</td>
+        <td><span class="state ${cls}">${esc(STATE_CN[vm.state] || vm.state)}</span></td>
+        <td>${esc(vm.ip)}</td><td>${esc(vm.os)}</td>
+        <td>${esc(vm.cpu)}</td><td>${esc(vm.memory)} MB</td>
+        <td>${ops}</td></tr>`;
+    }).join('');
+  } catch (e) {
+    msg('加载 VM 列表失败: ' + e.message, true);
+  }
+}
+
+async function power(id, op) {
+  try {
+    await call(`/vms/${id}/${op}`, { method: 'POST' });
+    msg('操作已下发');
+    renderVMs();
+  } catch (e) {
+    msg('操作失败: ' + e.message, true);
+  }
+}
+
+renderHost();
+renderVMs();
+</script>
+</body>
+</html>

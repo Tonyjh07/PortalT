@@ -1,5 +1,32 @@
 package domain
 
+import "strings"
+
+// PluginType 插件类型。
+type PluginType string
+
+const (
+	// PluginTypeIframe 嵌入型插件：iframe 嵌入外部页面（既有能力）
+	PluginTypeIframe PluginType = "iframe"
+	// PluginTypeProxy 脚本型插件：PortalT 标准 API 代理（白名单端点转发到插件自己的 API 服务）
+	PluginTypeProxy PluginType = "proxy"
+	// PluginTypeNative 原生插件：编译进后端的 Go 插件（registry 注册，可提供 API 与内嵌静态页面）
+	PluginTypeNative PluginType = "native"
+)
+
+// PluginEndpoint 脚本插件的标准 API 端点声明。
+// PortalT 只转发白名单内的端点，避免把内部接口暴露给第三方服务。
+type PluginEndpoint struct {
+	// Method HTTP 方法（GET/POST/PUT/DELETE）
+	Method string `json:"method"`
+	// Path 端点路径（相对插件 ApiURL，如 "/api/info"）
+	Path string `json:"path"`
+	// Name 端点名称
+	Name string `json:"name"`
+	// Description 端点说明
+	Description string `json:"description"`
+}
+
 // Plugin 插件领域实体，描述门户中的一个可动态扩展的菜单/功能模块。
 type Plugin struct {
 	// ID 唯一标识
@@ -10,8 +37,14 @@ type Plugin struct {
 	Icon string `json:"icon"`
 	// Route 前端路由路径（如 "/ha"）
 	Route string `json:"route"`
-	// IframeURL 插件嵌入的页面地址（如 "https://ha.local"）
+	// Type 插件类型：iframe | proxy | native（默认 iframe）
+	Type PluginType `json:"type"`
+	// IframeURL iframe 类型插件的嵌入页面地址（如 "https://ha.local"）
 	IframeURL string `json:"iframe_url"`
+	// ApiURL proxy 类型插件的 API 服务地址（如 "http://127.0.0.1:8701"）
+	ApiURL string `json:"api_url"`
+	// Endpoints proxy 类型插件声明的标准 API 端点白名单
+	Endpoints []PluginEndpoint `json:"endpoints"`
 	// Permission 访问该插件所需的权限，空字符串表示无需额外权限
 	Permission string `json:"permission"`
 	// SortOrder 排序权重，值越小越靠前
@@ -20,9 +53,40 @@ type Plugin struct {
 	IsActive bool `json:"is_active"`
 }
 
+// IsValidPluginType 判断插件类型是否合法（空视为默认 iframe）。
+func IsValidPluginType(t PluginType) bool {
+	switch t {
+	case "", PluginTypeIframe, PluginTypeProxy, PluginTypeNative:
+		return true
+	default:
+		return false
+	}
+}
+
+// NormalizePluginType 归一化插件类型（空 → iframe）。
+func NormalizePluginType(t PluginType) PluginType {
+	if t == "" {
+		return PluginTypeIframe
+	}
+	return t
+}
+
+// FindEndpoint 按方法与路径匹配端点白名单（路径两侧忽略前导斜杠）。
+func (p *Plugin) FindEndpoint(method, path string) (*PluginEndpoint, bool) {
+	path = strings.TrimPrefix(path, "/")
+	for i := range p.Endpoints {
+		e := &p.Endpoints[i]
+		if strings.EqualFold(e.Method, method) && strings.TrimPrefix(e.Path, "/") == path {
+			return e, true
+		}
+	}
+	return nil, false
+}
+
 // CanAccess 判断指定用户是否可以访问该插件。
 // 规则：插件必须已启用；若配置了权限要求，则用户必须具备对应权限。
-func (p *Plugin) CanAccess(user *User) bool {
+// 运行时权限集合优先（角色矩阵），未提供时回退内置表。
+func (p *Plugin) CanAccess(user *User, perms ...map[string]struct{}) bool {
 	if p == nil || user == nil {
 		return false
 	}
@@ -31,6 +95,10 @@ func (p *Plugin) CanAccess(user *User) bool {
 	}
 	if p.Permission == "" {
 		return true
+	}
+	if len(perms) > 0 && perms[0] != nil {
+		_, ok := perms[0][p.Permission]
+		return ok
 	}
 	return user.HasPermission(p.Permission)
 }

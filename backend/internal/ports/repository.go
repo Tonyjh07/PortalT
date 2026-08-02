@@ -62,3 +62,16 @@ type PluginRepository interface {
 	// Delete 按ID删除插件，不存在返回 ErrNotFound
 	Delete(id string) error
 }
+
+// RoleRepository 角色（权限矩阵）数据仓储接口。
+// 由 adapters 层实现，供权限管理与权限校验使用。
+type RoleRepository interface {
+	// Save 保存角色（存在则覆盖，upsert语义）
+	Save(role *domain.RoleDefinition) error
+	// FindByID 按ID查找角色，不存在返回 ErrNotFound
+	FindByID(id string) (*domain.RoleDefinition, error)
+	// FindAll 返回全部角色，按 ID 排序
+	FindAll() ([]*domain.RoleDefinition, error)
+	// Delete 按ID删除角色，不存在返回 ErrNotFound
+	Delete(id string) error
+}

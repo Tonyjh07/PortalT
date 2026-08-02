@@ -693,6 +693,7 @@ DOMAIN=portal.yourlab.com
 - [ ] 可部署到生产环境（Docker Compose一键启动）
 - [ ] 文档完整（README + API文档）
 - [ ] 插件系统可正常工作（添加/删除菜单）
+- [x] ~~插件系统~~（Phase 9 完成：菜单/权限/脚本与原生插件）
 - [ ] 支持至少2种认证方式切换（本地 + 待扩展）
 - [ ] 支持至少2种虚拟化平台切换（ESXi + Mock）
 
@@ -712,7 +713,7 @@ DOMAIN=portal.yourlab.com
 | Phase 6: 核心API | ✅ 完成 | 2026-08-01 | VM 管理/状态轮询 + 动态菜单 + 插件管理 + Guacamole WS 代理 + RBAC 中间件；`make test-api` + curl 实测通过 |
 | Phase 7: 前端 | ✅ 完成 | 2026-08-01 | Nuxt 3 + Element Plus：登录/仪表盘/VM 管理/动态菜单/插件页/暗色主题；`npm run build` + dev 代理链实测通过 |
 | Phase 8: Guacamole集成 | ✅ 完成 | 2026-08-01 | guacd 原生隧道（服务端握手 + VM metadata guac.* 参数注入）+ RemoteDesktop.vue（guacamole-common-js）+ docker-compose 演示容器（guacd + vnc-demo）；浏览器 E2E 全链路通过（登录 → 已连接 → VNC 桌面渲染 → 鼠标输入） |
-| Phase 9: 插件系统 | ⬜ 未开始 | - | - |
+| Phase 9: 插件系统 | ✅ 完成 | 2026-08-02 | 三部分全部交付：①权限管理（roles 表+迁移 002、RoleLoader/AttachPermissions 中间件、用户/角色 CRUD API+前端、RBAC 改走角色矩阵）②插件系统（proxy 脚本插件白名单转发+身份头注入、native Go 插件 registry+Deps 注入+内嵌静态页、迁移 003、迁移器版本追踪）③示例插件 esxi-admin（宿主信息+VM 快捷电源）；`go test ./... -count=1` 全绿 + `npm run build` 通过 + 运行时全链路验证（native API/静态页、proxy 转发 200 且 X-PortalT-User 正确注入） |
 | Phase 10: CI/CD与部署 | ⬜ 未开始 | - | - |
 
 ### 环境与配置备注

@@ -16,9 +16,19 @@ import (
 	authadapter "portalt/internal/adapters/auth"
 	"portalt/internal/adapters/gormstore"
 	"portalt/internal/api"
+	"portalt/internal/api/middleware"
 	"portalt/internal/api/v1"
 	"portalt/internal/domain/services"
+	"portalt/internal/plugins"
+	"portalt/internal/plugins/examples/esxiadmin"
 )
+
+// builtinPlugins 内置原生插件列表（示例插件见 internal/plugins/examples）。
+func builtinPlugins() []plugins.Plugin {
+	return []plugins.Plugin{
+		esxiadmin.New(),
+	}
+}
 
 const (
 	// AppVersion 当前版本号
@@ -58,6 +68,27 @@ func main() {
 	}
 	log.Printf("管理员账号已就绪（%s）", envOr("ADMIN_USERNAME", "admin"))
 
+	// 角色权限矩阵引导（内置三角色种子 + 权限加载器）
+	roleRepo := gormstore.NewRoleRepository(db)
+	if err := services.EnsureDefaultRoles(ctx, roleRepo); err != nil {
+		log.Fatalf("角色权限引导失败: %v", err)
+	}
+	roleLoader := middleware.NewRoleLoader(roleRepo)
+	log.Printf("角色权限矩阵已就绪")
+
+	// 原生插件注册表（启动时注册完毕；同步到 plugins 表供菜单与权限管理）
+	native := plugins.NewRegistry()
+	for _, p := range builtinPlugins() {
+		if err := native.Register(p); err != nil {
+			log.Fatalf("原生插件注册失败: %v", err)
+		}
+	}
+	if n, err := services.SyncNativePlugins(ctx, pluginRepo, native); err != nil {
+		log.Printf("警告: 原生插件同步失败: %v", err)
+	} else if n > 0 {
+		log.Printf("原生插件已同步: %d 个", n)
+	}
+
 	// 虚拟化提供者与 VM 服务
 	provider, err := adapters.NewVirtualizationProvider(envOr("VIRT_PROVIDER", "mock"), map[string]string{
 		"url":      envOr("VIRT_URL", envOr("VIRT_ESXI_URL", envOr("VIRT_WS_URL", ""))),
@@ -81,11 +112,17 @@ func main() {
 	api.AppVersion = AppVersion
 	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM)
 	router := api.NewRouter(tm, &api.HandlerSet{
-		Auth:   v1.NewAuthHandler(authProvider, tm),
-		VM:     v1.NewVMHandler(vmService),
-		Menu:   v1.NewMenuHandler(pluginRepo),
-		Plugin: v1.NewPluginHandler(pluginRepo),
-		Guac:   guacHandler,
+		Auth:        v1.NewAuthHandler(authProvider, tm),
+		VM:          v1.NewVMHandler(vmService),
+		Menu:        v1.NewMenuHandler(pluginRepo),
+		Plugin:      v1.NewPluginHandler(pluginRepo),
+		PluginProxy: v1.NewPluginProxyHandler(pluginRepo),
+		User:        v1.NewUserHandler(userRepo),
+		Role:        v1.NewRoleHandler(roleRepo, roleLoader),
+		Guac:        guacHandler,
+		Native:      native,
+		NativeDeps:  plugins.Deps{VMs: vmService},
+		PluginRepo:  pluginRepo,
 	})
 
 	srv := &http.Server{

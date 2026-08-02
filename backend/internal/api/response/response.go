@@ -18,6 +18,7 @@ const (
 	CodeForbidden          = 4005 // 权限不足
 	CodeNotFound           = 4006 // 资源不存在
 	CodeInvalidOperation   = 4007 // 操作在当前状态不允许
+	CodeConflict           = 4008 // 资源冲突（如用户名已存在）
 	CodeServerError        = 5000 // 服务器内部错误
 )
 
