@@ -124,8 +124,11 @@ GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
   不存在或已停用 → 404）
 - 静态前端：`/native/:pluginId/`（公开托管内嵌页，数据访问一律走鉴权 API；前端 iframe 用
   `/native/<id>/` 嵌入）
-- 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `VMServiceFacade`（ListVMs/电源操作/GetHostInfo）
-- 示例插件 `esxi-admin`（`internal/plugins/examples/esxiadmin`）：宿主信息 + VM 快捷电源操作
+- 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `Provider`（平台类型）与
+  `WebURL`（平台 Web 界面地址，如 ESXi 的 `https://host/ui/`）
+- 完整开发规范见 [plugins.md](./plugins.md)
+- 示例插件：`esxi-admin`（iframe 嵌入 ESXi Web 管理界面，`internal/plugins/examples/esxiadmin`）、
+  `cron`（内存定时任务，`internal/plugins/examples/cron`）
 
 ### 用户管理（需认证 + `user:manage`，管理员）
 
