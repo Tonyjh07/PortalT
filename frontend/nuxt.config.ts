@@ -34,6 +34,11 @@ export default defineNuxtConfig({
       },
     },
   },
+  // 生产（nuxt preview / 部署）时 /api 与 /native 反代到后端
+  routeRules: {
+    '/api/**': { proxy: 'http://localhost:8080/api/**' },
+    '/native/**': { proxy: 'http://localhost:8080/native/**' },
+  },
   app: {
     head: {
       title: 'PortalT - HomeLab 统一门户',
