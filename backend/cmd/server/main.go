@@ -22,6 +22,7 @@ import (
 	"portalt/internal/api/v1"
 	"portalt/internal/domain/services"
 	"portalt/internal/plugins"
+	"portalt/internal/plugins/examples/cron"
 	"portalt/internal/plugins/examples/esxiadmin"
 )
 
@@ -29,6 +30,7 @@ import (
 func builtinPlugins() []plugins.Plugin {
 	return []plugins.Plugin{
 		esxiadmin.New(),
+		cron.New(),
 	}
 }
 
