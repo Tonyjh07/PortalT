@@ -13,6 +13,35 @@ const loading = ref(false)
 const polling = ref(false)
 let timer: ReturnType<typeof setInterval> | null = null
 
+const rdCardRef = ref<{ $el: HTMLElement } | null>(null)
+const isFullscreen = ref(false)
+const rdState = reactive({ connecting: false, connected: false })
+
+function toggleFullscreen() {
+  const el = rdCardRef.value?.$el
+  if (!el) return
+  if (document.fullscreenElement) {
+    void document.exitFullscreen()
+    isFullscreen.value = false
+  } else {
+    void el.requestFullscreen()
+    isFullscreen.value = true
+  }
+}
+
+function onRdState(s: { connecting: boolean; connected: boolean; error: string }) {
+  rdState.connecting = s.connecting
+  rdState.connected = s.connected
+}
+
+// 扩展信息展示时隐藏敏感键（密码/令牌），仅展示连接参数
+const displayMetadata = computed(() => {
+  const md = vm.value?.metadata || {}
+  return Object.entries(md)
+    .filter(([key]) => !/password|passwd|secret|token/i.test(key))
+    .map(([key, value]) => ({ key, value: typeof value === 'string' ? value : JSON.stringify(value) }))
+})
+
 async function loadVM() {
   loading.value = true
   try {
@@ -80,7 +109,7 @@ onUnmounted(stopPolling)
           <VMStatusTag :status="vm.status" />
           <el-tag v-if="polling" type="info" size="small" effect="plain">自动刷新 10s</el-tag>
         </div>
-        <PowerActions :vm="vm" @changed="loadVM" />
+        <VmPowerActions :vm="vm" @changed="loadVM" />
       </div>
 
       <el-row :gutter="16">
@@ -119,30 +148,45 @@ onUnmounted(stopPolling)
         </el-col>
 
         <el-col :xs="24" :lg="16">
-          <el-card shadow="never" class="mb-3">
+          <el-card ref="rdCardRef" shadow="never" class="mb-3 rd-card">
             <template #header>
               <div class="card-header">
                 <span>远程桌面</span>
-                <el-tag type="warning" size="small" effect="plain">Phase 8</el-tag>
+                <div class="rd-actions">
+                  <el-tag v-if="rdState.connected" type="success" size="small" effect="plain">已连接</el-tag>
+                  <el-tag v-else-if="rdState.connecting" type="info" size="small" effect="plain">连接中</el-tag>
+                  <el-tag v-else type="warning" size="small" effect="plain">未连接</el-tag>
+                </div>
               </div>
             </template>
-            <div class="rd-placeholder">
-              <IconRenderer icon="mdi:desktop" :size="48" />
-              <p>浏览器远程桌面将在 Phase 8 提供</p>
-              <el-text type="info" size="small">
-                WebSocket 入口已就绪：<code>/api/v1/guac/ws/{{ vm.id }}</code>
+            <div v-if="vm.status === 'poweredOn'" class="rd-conn-info">
+              <el-text size="small" type="info">
+                协议 {{ vm.metadata?.['guac.protocol'] || '未配置' }} ·
+                目标 {{ vm.metadata?.['guac.hostname'] || vm.ip_address || '-' }}:{{
+                  vm.metadata?.['guac.port'] || '默认'
+                }}
               </el-text>
+              <el-button size="small" type="primary" plain @click="toggleFullscreen">全屏</el-button>
+            </div>
+            <VmRemoteDesktop
+              v-if="vm.status === 'poweredOn'"
+              :vm="vm"
+              @state="onRdState"
+            />
+            <div v-else class="rd-placeholder">
+              <IconRenderer icon="mdi:desktop" :size="48" />
+              <p>虚拟机未开机，启动后可打开浏览器远程桌面</p>
             </div>
           </el-card>
 
           <el-card shadow="never">
             <template #header><span>扩展信息</span></template>
             <el-descriptions :column="1" size="small">
-              <el-descriptions-item v-for="(value, key) in vm.metadata" :key="key" :label="key">
-                {{ JSON.stringify(value) }}
+              <el-descriptions-item v-for="item in displayMetadata" :key="item.key" :label="item.key">
+                {{ item.value }}
               </el-descriptions-item>
             </el-descriptions>
-            <el-empty v-if="!vm.metadata || !Object.keys(vm.metadata).length" description="无扩展信息" :image-size="60" />
+            <el-empty v-if="!displayMetadata.length" description="无扩展信息" :image-size="60" />
           </el-card>
         </el-col>
       </el-row>
@@ -201,6 +245,19 @@ onUnmounted(stopPolling)
   gap: 12px;
   padding: 40px 0;
   color: var(--el-text-color-secondary);
+}
+
+.rd-conn-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.rd-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .rd-placeholder p {

@@ -42,6 +42,15 @@ func NewProvider(_ map[string]string) *Provider {
 			MemoryMB:  2048,
 			Host:      "mock-host",
 			IPAddress: fmt.Sprintf("192.168.1.%d", i),
+			// guac.* 为远程桌面连接参数（Phase 8），隧道建立时注入 guacd，
+			// 浏览器侧无法覆盖。演示环境：guacd（容器）经 host.docker.internal
+			// 访问宿主机 5900 端口的 VNC 演示容器（见 docker-compose）。
+			Metadata: map[string]any{
+				"guac.protocol": "vnc",
+				"guac.hostname": "host.docker.internal",
+				"guac.port":     "5900",
+				"guac.password": "portalt-demo",
+			},
 		}
 	}
 	return p

@@ -1,6 +1,6 @@
 # PortalT 接口文档
 
-> 仅记录当前已实现的接口与契约（截至 Phase 6）。
+> 仅记录当前已实现的接口与契约（截至 Phase 8）。
 
 ## 响应格式
 
@@ -102,16 +102,38 @@ DELETE /api/v1/plugins/:id → 删除插件
 
 - 请求体：`{"name","icon","route","iframe_url","permission","sort_order","is_active"}`
 
-### Guacamole 远程桌面代理（需认证）
+### 远程桌面隧道（需认证，Phase 8）
 
 ```
 GET /api/v1/guac/ws/:vmId
 ```
 
-- 需 `vm:view`；`GUAC_URL` 未配置时返回 503
-- WebSocket 双向转发到 Guacamole 隧道（`GUAC_URL`，http/https 自动转 ws/wss）
-- 上游注入请求头：`X-PortalT-User`（用户名）、`X-PortalT-Role`、`X-PortalT-VMID`
-- 上游不可达返回 502
+- 需 `vm:view`；认证支持 `Authorization: Bearer <token>` 与 `?token=<token>` 两种方式
+  （浏览器 WebSocket 无法携带自定义请求头，因此支持查询参数；`token` 值会在首个 `?`/`&` 处截断，
+  以容忍 guacamole-common-js 追加的 `?<connect data>` 后缀）
+- 隧道模式由环境变量选择（`GuacHandlerForEnv`）：
+  - `GUACD_URL` 已配置 → **guacd 原生隧道（推荐）**：服务端直连 guacd(:4822) 并完成
+    select/args/size/connect/ready 握手，连接参数全部来自 VM metadata `guac.*` 键（见下表），
+    浏览器侧不可覆盖目标与凭证
+  - `GUAC_URL` 已配置 → 旧模式：转发 Guacamole Web 应用 WebSocket 隧道（注入
+    `X-PortalT-User`/`X-PortalT-Role`/`X-PortalT-VMID` 头）
+  - 均未配置 → 503
+- 握手失败以 WS Close 1001（内部错误）关闭；guacd 不可达返回 502；VM 不存在返回 404
+- 子协议：升级时回显 `guacamole`（guacamole-common-js 固定携带该子协议）
+- 客户端内部指令（稳定性 ping，opcode 为空）由服务端回显，不转发 guacd
+
+#### VM metadata `guac.*` 连接参数契约
+
+| 键 | 必填 | 说明 |
+|----|------|------|
+| `guac.protocol` | 否（默认 vnc） | vnc / rdp / ssh / telnet |
+| `guac.hostname` | 否 | 目标主机；缺省回退 VM `ip_address` |
+| `guac.port` | 否 | 目标端口；缺省 vnc 5900 / rdp 3389 / ssh、telnet 22 |
+| `guac.username` / `guac.password` | 视目标而定 | 登录凭证 |
+| `guac.width` / `guac.height` | 否 | 初始分辨率（默认 1280×800） |
+| `guac.security` / `guac.domain` / `guac.read-only` / `guac.autoretry` / `guac.color-depth` | 否 | 透传协议参数 |
+
+使用与故障排查见 [remote-desktop.md](./remote-desktop.md)。
 
 ### RBAC 中间件（internal/api/middleware/rbac.go）
 
@@ -120,7 +142,7 @@ GET /api/v1/guac/ws/:vmId
 
 ### 认证中间件（internal/api/middleware/auth.go）
 
-- `AuthRequired(tokenManager)`：解析 `Bearer` 头，成功后将用户存入 gin.Context
+- `AuthRequired(tokenManager)`：解析 `Bearer` 头或 `?token=` 查询参数（WebSocket 场景），成功后将用户存入 gin.Context
 - `CurrentUser(c)`：读取当前用户；未认证返回 nil
 - 失败统一返回 4002/4003
 
@@ -186,7 +208,23 @@ type VirtualizationProvider interface {
 - 实现计划：esxi（Phase 4）/ mock / proxmox
 - 领域服务经此接口编排，实现平台可移植
 - 已实现：`internal/adapters/esxi`（govmomi，惰性连接 + 指数退避重试；ID=VM UUID，MOID 存 metadata；`make test-esxi` 用 vcsim 验证）
+- 已实现：`internal/adapters/workstation`（VMware Workstation vmrest REST API，纯标准库无新依赖；`VIRT_PROVIDER=workstation` 本机调试，见下）
 - 已实现：`internal/adapters/mock`（内存态模拟器，内置示例数据；`VIRT_PROVIDER=mock` 开发调试）
+
+### VMware Workstation 适配器（internal/adapters/workstation）
+
+Workstation 17+ 内置 REST API 服务 `vmrest`（默认 `http://127.0.0.1:8697`，Basic 认证）。启用：
+
+```
+cd "C:\Program Files (x86)\VMware\VMware Workstation"
+vmrest.exe -C        # 设置凭证（保存到 %USERPROFILE%\vmrest.cfg），需管理员
+vmrest               # 启动服务（HTTPS 需 -c 证书 -k 私钥）
+```
+
+- 配置：`VIRT_PROVIDER=workstation` + `VIRT_WS_URL/USERNAME/PASSWORD/INSECURE`（url 缺省本机 8697）
+- 端点：`GET /api/vms` → id+path 列表，详情逐台查询；`PUT /api/vms/{id}/power` body 为裸字符串 `on/off/reset`，Content-Type `application/vnd.vmware.vmw.rest-v1+json`；`GET /api/vms/{id}/ipaddress`；`GET /api/host`（404 时回退最小信息）
+- 容错：状态映射对 `on`/`poweredOn` 等大小写变体归一；CPU/内存支持新旧字段名及子对象（`cpu.processors`、`memory.memory_MiB`）；name 缺省回退 vmx 文件名
+- 远程桌面：`guac.hostname` 自动写入虚拟机 IP（若详情可取得），方便 guacd 隧道开箱调试
 
 ### 提供者工厂（internal/adapters/virt_factory.go）
 
@@ -198,8 +236,9 @@ NewVirtualizationProvider(virtType string, config map[string]string) (ports.Virt
 |----------|--------|------|
 | `mock`（默认） | 无 | 内存模拟，含 3 台示例 VM |
 | `esxi` | `url`（必填）、`username`、`password`、`insecure` | 连接延迟到首次调用 |
+| `workstation` | `url`、`username`、`password`、`insecure` | url 缺省 `http://127.0.0.1:8697`，无真实环境时 401/拒连为预期错误 |
 
-切换方式：`VIRT_PROVIDER=mock` 或 `esxi`（接线在 Phase 5/6 落地，工厂已就绪）。
+切换方式：`VIRT_PROVIDER=mock`、`esxi` 或 `workstation`；配置走通用 `VIRT_URL/USERNAME/PASSWORD/INSECURE`（缺省回退 `VIRT_ESXI_*`、`VIRT_WS_*`）。
 
 ## 业务服务（internal/domain/services/vm_service.go）
 

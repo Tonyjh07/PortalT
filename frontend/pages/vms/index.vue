@@ -69,7 +69,7 @@ onMounted(loadVMs)
         <el-table-column prop="host" label="宿主机" min-width="120" />
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <PowerActions :vm="row" @changed="loadVMs" />
+            <VmPowerActions :vm="row" @changed="loadVMs" />
           </template>
         </el-table-column>
       </el-table>

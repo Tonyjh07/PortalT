@@ -122,6 +122,46 @@ func TestAuthRequired_InvalidToken(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "无效或已过期")
 }
 
+func TestAuthRequired_QueryToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r, w := setupGin()
+
+	tm := &stubTokenManager{user: &domain.User{ID: "u-1", Username: "bob", Role: domain.RoleUser}}
+	r.GET("/ws", AuthRequired(tm), func(c *gin.Context) {
+		u := CurrentUser(c)
+		assert.Equal(t, "bob", u.Username)
+		c.Status(http.StatusOK)
+	})
+
+	// WebSocket 升级请求无法携带自定义头，支持 ?token= 回退
+	req := httptest.NewRequest(http.MethodGet, "/ws?token=valid-token", nil)
+	r.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestAuthRequired_QueryToken_GuacamoleAppendedData(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r, w := setupGin()
+
+	tm := &stubTokenManager{user: &domain.User{ID: "u-1", Username: "bob", Role: domain.RoleUser}}
+	r.GET("/ws", AuthRequired(tm), func(c *gin.Context) {
+		u := CurrentUser(c)
+		assert.Equal(t, "bob", u.Username)
+		c.Status(http.StatusOK)
+	})
+
+	// guacamole-common-js 的 WebSocketTunnel 会追加 "?" + connect 数据
+	// （无参时为 "undefined"），token 后出现 ? 或 & 均应截断
+	for _, q := range []string{
+		"/ws?token=valid-token?undefined",
+		"/ws?token=valid-token&connect=abc",
+	} {
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, q, nil))
+		assert.Equal(t, http.StatusOK, w.Code, "query=%s", q)
+	}
+}
+
 func TestCurrentUser_NilWhenUnauthenticated(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r, w := setupGin()

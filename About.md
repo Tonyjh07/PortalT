@@ -473,6 +473,17 @@ docker-compose up guacamole
    - 客户机必须开启RDP（Windows）或VNC/SSH（Linux）
    - 在数据库或配置文件中存储连接参数（IP、端口、协议、凭证）
 
+**验证结果（2026-08-01）**：浏览器 E2E（puppeteer）全链路通过 —— 登录 → VM 详情页 → 远程桌面 canvas 挂载 → 界面显示"已连接" → VNC 桌面内容渲染（1024×768 非纯黑像素）→ 鼠标输入发送 → 截图 1400×950 → 无 console 错误；Node WS 冒烟（直连 8080 与经 dev 代理 3000 两条路径）均收到完整渲染指令流（mouse/size/img/blob/end/cursor/set/sync）且连接保持活跃。
+
+**完成说明**：
+- **后端**：`internal/api/v1/guac_tunnel.go` —— GuacdHandler 直连 guacd(:4822) 并服务端完成协议握手（select/args/size/connect/ready），连接参数全部取自 VM metadata `guac.*` 键（hostname/port 缺省回退 VM 固有属性与协议默认值），浏览器无法覆盖目标与凭证；客户端内部指令（稳定性 ping）回显不转发；握手失败以 WS Close 1001 关闭；`GuacHandlerForEnv` 按 `GUACD_URL`（新）/`GUAC_URL`（旧代理）/未配置（503）三态接线；认证中间件支持 `?token=` 查询参数（WS 无法带自定义头），并在首个 `?`/`&` 截断以容忍 guacamole-common-js 追加的 `?<data>` 后缀；WS 升级器回显子协议 `guacamole`；mock 提供者注入演示参数（vnc + host.docker.internal:5900 + portalt-demo）
+- **测试**：`guac_tunnel_test.go` mockGuacd TCP 服务器 + 7 个隧道测试（握手/双向转发/ping 回显/客户端断开/502/404/内部错误关闭）+ splitInstructions/Config 单测；`auth_test.go` 新增 query token 与追加数据截断用例；`go test ./... -count=1` 全绿
+- **docker-compose.yml**：新增 `guacd`（guacamole/guacd:1.5.5，:4822，extra_hosts host.docker.internal:host-gateway）与 `vnc-demo`（dorowu/ubuntu-desktop-lxde-vnc，VNC_PASSWORD=portalt-demo，:5900）两个演示服务
+- **前端**：`components/vm/RemoteDesktop.vue` —— guacamole-common-js WebSocketTunnel + Client；连接状态用 `Guacamole.Client.State`（WAITING/CONNECTED 视为已连接；Tunnel.State 是另一套枚举，混用会导致状态永不更新）；sendSize 自适应 + display.scale 等比缩放；全局键盘 + 画布鼠标；错误重连按钮；全屏由详情页 el-card 管理；`types/guacamole-common-js.d.ts` 手写最小类型面；`pages/vms/[id].vue` 扩展信息展示（过滤 password/secret/token 键）+ 连接状态标签 + 全屏
+- **dev 代理**：Nuxt nitro `devProxy` 的 WS 升级转发不可靠（升级穿透到 dev worker 被当作普通请求），新增 `frontend/modules/wsProxy.ts`（仅 dev 生效）：复用 `ws: true` 规则，在 nuxi 父进程覆盖 `nuxt.server.upgrade`，用 `httpxy`（devDependencies）直连后端 origin 并保留原始路径（避免 target 路径双重拼接）
+
+**经验**：Nuxt 自动导入组件会加目录前缀（`components/vm/RemoteDesktop.vue` → 全局名 `VmRemoteDesktop`，页面按不带前缀名字引用会渲染成未注册的空自定义元素）；guacamole-common-js 的 `WebSocketTunnel` 会把 connect 参数追加为 `?<data>`（无参时为 `?undefined`），服务端解析 token 需截断；`client.onstatechange` 收的是 `Client.State`（CONNECTED=3，首帧 sync 到达）而非 `Tunnel.State`；浏览器要求升级响应回显 `Sec-WebSocket-Protocol: guacamole`，否则握手失败。
+
 ---
 
 ### Phase 9：插件系统
@@ -566,8 +577,8 @@ ESXI_PASS=password
 ESXI_INSECURE=true          # 忽略证书验证
 
 # Guacamole
-GUAC_URL=http://guacamole:8080
-GUAC_SECRET=guac-secret
+GUACD_URL=guacd:4822              # Phase 8 远程桌面：guacd 原生隧道（推荐）
+GUAC_URL=http://guacamole:8080    # 旧模式：转发 Guacamole Web 应用隧道（GUACD_URL 优先）
 
 # 管理员初始账号
 ADMIN_USERNAME=admin
@@ -700,7 +711,7 @@ DOMAIN=portal.yourlab.com
 | Phase 5: 认证与JWT | ✅ 完成 | 2026-08-01 | bcrypt 本地认证 + JWT（access 15m/refresh 7d）+ Gin 登录/刷新/me + 管理员引导，`make test-auth` + curl 实测通过 |
 | Phase 6: 核心API | ✅ 完成 | 2026-08-01 | VM 管理/状态轮询 + 动态菜单 + 插件管理 + Guacamole WS 代理 + RBAC 中间件；`make test-api` + curl 实测通过 |
 | Phase 7: 前端 | ✅ 完成 | 2026-08-01 | Nuxt 3 + Element Plus：登录/仪表盘/VM 管理/动态菜单/插件页/暗色主题；`npm run build` + dev 代理链实测通过 |
-| Phase 8: Guacamole集成 | ⬜ 未开始 | - | - |
+| Phase 8: Guacamole集成 | ✅ 完成 | 2026-08-01 | guacd 原生隧道（服务端握手 + VM metadata guac.* 参数注入）+ RemoteDesktop.vue（guacamole-common-js）+ docker-compose 演示容器（guacd + vnc-demo）；浏览器 E2E 全链路通过（登录 → 已连接 → VNC 桌面渲染 → 鼠标输入） |
 | Phase 9: 插件系统 | ⬜ 未开始 | - | - |
 | Phase 10: CI/CD与部署 | ⬜ 未开始 | - | - |
 

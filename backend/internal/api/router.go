@@ -6,6 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"portalt/internal/api/middleware"
+	"portalt/internal/api/response"
 	"portalt/internal/api/v1"
 	"portalt/internal/domain"
 	"portalt/internal/ports"
@@ -20,7 +21,7 @@ type HandlerSet struct {
 	VM     *v1.VMHandler
 	Menu   *v1.MenuHandler
 	Plugin *v1.PluginHandler
-	Guac   *v1.GuacHandler
+	Guac   v1.GuacProxy
 }
 
 // NewRouter 装配全部路由与中间件。
@@ -69,7 +70,13 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		plugins.DELETE("/:id", hs.Plugin.Delete)
 
 		// Guacamole 远程桌面代理（vm:view）
-		protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_VIEW), hs.Guac.Proxy)
+		if hs.Guac != nil {
+			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_VIEW), hs.Guac.Proxy)
+		} else {
+			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_VIEW), func(c *gin.Context) {
+				response.Error(c, http.StatusServiceUnavailable, response.CodeServerError, "Guacamole 未配置")
+			})
+		}
 	}
 
 	return router

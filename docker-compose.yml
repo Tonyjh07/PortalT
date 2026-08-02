@@ -1,5 +1,5 @@
 # PortalT docker-compose.yml (Phase 0: PostgreSQL + Caddy)
-# Phase 3+ 将加入 backend / frontend / guacamole 服务
+# Phase 8: + guacd（Guacamole 协议守护进程）与 VNC 演示目标
 
 name: portalt
 
@@ -21,6 +21,31 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # Guacamole 协议守护进程（Phase 8）：接收 PortalT 隧道的原生指令，
+  # 解析 VNC/RDP 协议渲染桌面。浏览器不直接接触 guacd，
+  # 仅经 PortalT 后端（GUACD_URL=guacd:4822）接入。
+  guacd:
+    image: guacamole/guacd:1.5.5
+    container_name: portalt-guacd
+    restart: unless-stopped
+    ports:
+      - "4822:4822"
+    extra_hosts:
+      # guacd 经宿主机访问演示 VNC 目标（Linux 需显式网关；Docker Desktop 自带）
+      - "host.docker.internal:host-gateway"
+
+  # VNC 演示目标（Phase 8）：mock 虚拟机 metadata 指向本容器（5900）。
+  # 生产环境请替换为真实虚拟机并更新 VM metadata 连接参数。
+  vnc-demo:
+    image: dorowu/ubuntu-desktop-lxde-vnc
+    container_name: portalt-vnc-demo
+    restart: unless-stopped
+    environment:
+      VNC_PASSWORD: portalt-demo
+      VNC_RESOLUTION: 1280x800
+    ports:
+      - "5900:5900"
 
   caddy:
     image: caddy:2

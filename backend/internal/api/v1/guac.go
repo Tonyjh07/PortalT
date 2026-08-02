@@ -29,8 +29,11 @@ func NewGuacHandler(guacWSURL string) *GuacHandler {
 }
 
 // upgrader WebSocket 升级器（关闭原始来源校验，由认证中间件把关）。
+// Subprotocols 固定回显 "guacamole"：guacamole-common-js 始终以该子协议连接，
+// 不响应会导致浏览器端握手失败。
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:  func(r *http.Request) bool { return true },
+	Subprotocols: []string{"guacamole"},
 }
 
 // Proxy GET /api/v1/guac/ws/:vmId
