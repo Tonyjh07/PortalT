@@ -60,10 +60,10 @@ func main() {
 
 	// 虚拟化提供者与 VM 服务
 	provider, err := adapters.NewVirtualizationProvider(envOr("VIRT_PROVIDER", "mock"), map[string]string{
-		"url":      envOr("VIRT_ESXI_URL", ""),
-		"username": envOr("VIRT_ESXI_USERNAME", ""),
-		"password": envOr("VIRT_ESXI_PASSWORD", ""),
-		"insecure": envOr("VIRT_ESXI_INSECURE", "false"),
+		"url":      envOr("VIRT_URL", envOr("VIRT_ESXI_URL", envOr("VIRT_WS_URL", ""))),
+		"username": envOr("VIRT_USERNAME", envOr("VIRT_ESXI_USERNAME", envOr("VIRT_WS_USERNAME", ""))),
+		"password": envOr("VIRT_PASSWORD", envOr("VIRT_ESXI_PASSWORD", envOr("VIRT_WS_PASSWORD", ""))),
+		"insecure": envOr("VIRT_INSECURE", envOr("VIRT_ESXI_INSECURE", envOr("VIRT_WS_INSECURE", "false"))),
 	})
 	if err != nil {
 		log.Fatalf("虚拟化提供者初始化失败: %v", err)
@@ -79,12 +79,13 @@ func main() {
 
 	// 路由
 	api.AppVersion = AppVersion
+	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM)
 	router := api.NewRouter(tm, &api.HandlerSet{
 		Auth:   v1.NewAuthHandler(authProvider, tm),
 		VM:     v1.NewVMHandler(vmService),
 		Menu:   v1.NewMenuHandler(pluginRepo),
 		Plugin: v1.NewPluginHandler(pluginRepo),
-		Guac:   v1.NewGuacHandler(v1.GuacURLFromEnv()),
+		Guac:   guacHandler,
 	})
 
 	srv := &http.Server{
