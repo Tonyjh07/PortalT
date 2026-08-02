@@ -13,8 +13,36 @@
     padding: 20px;
   }
   h1 { font-size: 18px; margin-bottom: 16px; color: #fff; }
-  h2 { font-size: 14px; margin: 18px 0 10px; color: #9d9d9d; font-weight: 600; }
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .notice {
+    background: #1e1e2e; border: 1px solid #3a3a5c; border-radius: 8px;
+    padding: 14px 18px; margin-bottom: 18px; font-size: 13px;
+  }
+  .notice h2 { margin: 0 0 8px; color: #fbbf24; font-size: 15px; }
+  .notice p { margin: 4px 0; color: #c9c9d6; }
+  .notice b { color: #fff; }
+  .notice pre {
+    background: #14141f; border: 1px solid #2d2d44; border-radius: 6px;
+    padding: 10px 12px; margin: 8px 0; font-size: 12px; overflow: auto;
+  }
+  .notice code { background: #14141f; border-radius: 4px; padding: 1px 5px; font-size: 12px; }
+  .frame-wrap {
+    border: 1px solid #2e2e2e; border-radius: 8px; overflow: hidden;
+    background: #0d0d0d; margin-bottom: 18px;
+  }
+  .frame-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 14px; background: #1c1c1c; border-bottom: 1px solid #2e2e2e;
+    font-size: 13px; color: #9d9d9d;
+  }
+  .frame-bar a { color: #60a5fa; text-decoration: none; }
+  .frame-bar a:hover { text-decoration: underline; }
+  .esxi-frame { width: 100%; height: 72vh; border: 0; display: block; }
+  details {
+    background: #1a1a1a; border: 1px solid #2e2e2e; border-radius: 8px;
+    padding: 10px 14px; margin-top: 18px;
+  }
+  summary { cursor: pointer; color: #9d9d9d; font-size: 13px; font-weight: 600; user-select: none; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 12px; }
   .card { background: #1e1e1e; border: 1px solid #2e2e2e; border-radius: 8px; padding: 12px 14px; }
   .card .k { font-size: 12px; color: #8a8a8a; }
   .card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
@@ -40,15 +68,30 @@
 <body>
 <h1>ESXi 管理（示例原生插件）</h1>
 
-<h2>宿主机</h2>
-<div class="cards" id="hostCards"></div>
+<!-- Web 管理界面 iframe（可嵌入时显示） -->
+<div class="frame-wrap hidden" id="frameWrap">
+  <div class="frame-bar">
+    <span id="frameTitle">ESXi Web 管理界面</span>
+    <a id="openNew" href="#" target="_blank" rel="noopener">在新窗口打开 ↗</a>
+  </div>
+  <iframe class="esxi-frame" id="esxiFrame" referrerpolicy="no-referrer" allow="fullscreen"></iframe>
+</div>
 
-<h2>虚拟机</h2>
-<div class="msg hidden" id="msg"></div>
-<table>
-  <thead><tr><th>名称</th><th>状态</th><th>IP</th><th>系统</th><th>CPU</th><th>内存</th><th>操作</th></tr></thead>
-  <tbody id="vmRows"></tbody>
-</table>
+<!-- 未连接 / 未配置提示 -->
+<div class="notice hidden" id="notice">
+  <h2 id="noticeTitle">ESXi 未连接</h2>
+  <div id="noticeBody"></div>
+</div>
+
+<details id="tools">
+  <summary>宿主机信息 / 快速操作</summary>
+  <div class="cards" id="hostCards"></div>
+  <div class="msg hidden" id="msg"></div>
+  <table>
+    <thead><tr><th>名称</th><th>状态</th><th>IP</th><th>系统</th><th>CPU</th><th>内存</th><th>操作</th></tr></thead>
+    <tbody id="vmRows"></tbody>
+  </table>
+</details>
 
 <script>
 const API = '/api/v1/plugins/native/esxi-admin';
@@ -68,7 +111,51 @@ async function call(path, opts = {}) {
   return body.data;
 }
 
+const PROVIDER_CN = { esxi: 'VMware ESXi', workstation: 'VMware Workstation', mock: 'Mock（演示数据）' };
+
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+async function renderConfig() {
+  const cfg = await call('/config');
+  const frameWrap = document.getElementById('frameWrap');
+  const notice = document.getElementById('notice');
+  const title = document.getElementById('noticeTitle');
+  const body = document.getElementById('noticeBody');
+  const providerCn = PROVIDER_CN[cfg.provider] || cfg.provider;
+
+  if (cfg.web_url) {
+    document.getElementById('esxiFrame').src = cfg.web_url;
+    document.getElementById('frameTitle').textContent =
+      'ESXi Web 管理界面（' + cfg.web_url + '）';
+    document.getElementById('openNew').href = cfg.web_url;
+    frameWrap.classList.remove('hidden');
+    notice.classList.add('hidden');
+  } else if (cfg.connected) {
+    // ESXi 已连接，但未配置可嵌入的 Web 界面地址
+    title.textContent = 'ESXi 已连接，未配置 Web 管理界面地址';
+    body.innerHTML =
+      '<p>当前为 <b>' + esc(providerCn) + '</b>，但缺少 Web 界面地址，无法 iframe 嵌入。</p>' +
+      '<p>在 <code>backend/.env</code> 中配置：</p>' +
+      '<pre>ESXI_WEB_URL=https://&lt;esxi-host&gt;/ui/   # 覆盖自动推导</pre>' +
+      '<p>不配置时会从 <code>VIRT_URL</code> 自动推导（<code>https://&lt;esxi-host&gt;/ui/</code>）。修改后重启后端。</p>';
+    frameWrap.classList.add('hidden');
+    notice.classList.remove('hidden');
+  } else {
+    title.textContent = 'ESXi 未连接';
+    body.innerHTML =
+      '<p>当前虚拟化平台为 <b>' + esc(providerCn) + '</b>，暂无 ESXi Web 界面可嵌入。</p>' +
+      '<p>连接真实 ESXi 的配置方式（<code>backend/.env</code>）：</p>' +
+      '<pre>VIRT_PROVIDER=esxi\n' +
+      'VIRT_URL=https://&lt;esxi-host&gt;/sdk\n' +
+      'VIRT_USERNAME=&lt;账号&gt;\n' +
+      'VIRT_PASSWORD=&lt;密码&gt;\n' +
+      'VIRT_INSECURE=true   # 自签名证书时设为 true</pre>' +
+      '<p>修改后重启后端：<code>go run ./cmd/server</code>。Web 界面地址默认从 <code>VIRT_URL</code> 推导，' +
+      '也可用 <code>ESXI_WEB_URL</code> 覆盖。下方"宿主机信息"仍会展示当前平台的真实数据。</p>';
+    frameWrap.classList.add('hidden');
+    notice.classList.remove('hidden');
+  }
+}
 
 function msg(text, isErr) {
   const el = document.getElementById('msg');
@@ -135,6 +222,11 @@ async function power(id, op) {
   }
 }
 
+renderConfig().catch(e => {
+  document.getElementById('noticeTitle').textContent = '配置加载失败';
+  document.getElementById('noticeBody').innerHTML = '<p>' + esc(e.message) + '</p>';
+  document.getElementById('notice').classList.remove('hidden');
+});
 renderHost();
 renderVMs();
 </script>

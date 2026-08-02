@@ -26,6 +26,12 @@ import (
 type Deps struct {
 	// VMs 虚拟机服务（列表/电源操作/宿主机信息），esxi-admin 等插件使用
 	VMs VMServiceFacade
+	// Provider 当前虚拟化平台类型（esxi / workstation / mock），
+	// 供插件展示平台状态与配置指引
+	Provider string
+	// WebURL 目标平台 Web 管理界面地址（如 ESXi 的 https://host/ui/），
+	// 供 iframe 类插件嵌入；为空表示未配置
+	WebURL string
 }
 
 // VMServiceFacade 暴露给原生插件的虚拟机能力子集。

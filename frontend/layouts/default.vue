@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { token } = useAuth()
+const { token, user, fetchMe, logout } = useAuth()
 const { load, loaded } = useMenu()
 const { init } = useTheme()
 
@@ -10,14 +10,20 @@ onMounted(async () => {
   if (!token.value) {
     return navigateTo('/login')
   }
+  // 刷新/热重载后 token 从 cookie 恢复但 user 为 null：重新拉取当前用户；
+  // 令牌已失效时清空登录态并回登录页
+  if (!user.value) {
+    const me = await fetchMe()
+    if (!me) {
+      logout()
+      return navigateTo('/login')
+    }
+  }
   try {
     if (!loaded.value) await load()
   } catch {
-    if (process.client) {
-      const { logout } = useAuth()
-      logout()
-      navigateTo('/login')
-    }
+    logout()
+    navigateTo('/login')
   }
 })
 </script>
@@ -29,10 +35,10 @@ onMounted(async () => {
         <IconRenderer icon="mdi:server" :size="24" />
         <span v-if="!collapsed" class="logo-text">PortalT</span>
       </div>
-      <SideMenu :collapsed="collapsed" />
+      <MenuSideMenu :collapsed="collapsed" class="side-menu-scroll" />
+      <LayoutSidebarFooter :collapsed="collapsed" class="side-footer" @toggle="collapsed = !collapsed" />
     </el-aside>
     <el-container>
-      <AppHeader @toggle="collapsed = !collapsed" />
       <el-main class="app-main">
         <slot />
       </el-main>
@@ -67,6 +73,16 @@ onMounted(async () => {
   font-size: 18px;
   font-weight: 700;
   color: var(--el-color-primary);
+}
+
+.side-menu-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.side-footer {
+  flex-shrink: 0;
 }
 
 .app-main {

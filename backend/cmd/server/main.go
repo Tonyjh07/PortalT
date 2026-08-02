@@ -8,8 +8,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"portalt/internal/adapters"
@@ -121,7 +123,11 @@ func main() {
 		Role:        v1.NewRoleHandler(roleRepo, roleLoader),
 		Guac:        guacHandler,
 		Native:      native,
-		NativeDeps:  plugins.Deps{VMs: vmService},
+		NativeDeps: plugins.Deps{
+			VMs:      vmService,
+			Provider: envOr("VIRT_PROVIDER", "mock"),
+			WebURL:   envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
+		},
 		PluginRepo:  pluginRepo,
 	})
 
@@ -142,6 +148,17 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// deriveWebURL 从虚拟化平台 SDK 地址推导其 Web 管理界面地址
+// （如 https://esxi.lan/sdk → https://esxi.lan/ui/）；无法解析时返回空串，
+// 表示该平台无内置 Web 界面（workstation/mock）。
+func deriveWebURL(sdkURL string) string {
+	u, err := url.Parse(strings.TrimSpace(sdkURL))
+	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host + "/ui/"
 }
 
 // envSeconds 读取以秒为单位的环境变量，非法或空时返回默认值。

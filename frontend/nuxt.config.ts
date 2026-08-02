@@ -27,6 +27,11 @@ export default defineNuxtConfig({
         changeOrigin: true,
         ws: true,
       },
+      // 原生插件内嵌静态前端（后端托管于 /native/<pluginId>/）
+      '/native': {
+        target: 'http://localhost:8080/native',
+        changeOrigin: true,
+      },
     },
   },
   app: {

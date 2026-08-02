@@ -25,6 +25,30 @@ body {
   padding: 20px;
 }
 
+.page-pad {
+  padding: 20px 24px;
+}
+
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.page-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.page-sub {
+  margin: 4px 0 0;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
 .page-title {
   margin: 0 0 16px;
   font-size: 20px;

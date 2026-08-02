@@ -48,16 +48,16 @@ onMounted(async () => {
     <h2 class="page-title">仪表盘</h2>
     <el-row :gutter="16" v-loading="loading">
       <el-col :xs="12" :sm="6">
-        <StatCard title="虚拟机总数" :value="vms.length" icon="mdi:server" />
+        <CardsStatCard title="虚拟机总数" :value="vms.length" icon="mdi:server" />
       </el-col>
       <el-col :xs="12" :sm="6">
-        <StatCard title="运行中" :value="runningCount" icon="mdi:play" color="#67c23a" />
+        <CardsStatCard title="运行中" :value="runningCount" icon="mdi:play" color="#67c23a" />
       </el-col>
       <el-col :xs="12" :sm="6">
-        <StatCard title="总 CPU 核数" :value="totalCpu" icon="mdi:memory" color="#e6a23c" />
+        <CardsStatCard title="总 CPU 核数" :value="totalCpu" icon="mdi:memory" color="#e6a23c" />
       </el-col>
       <el-col :xs="12" :sm="6">
-        <StatCard title="总内存" :value="fmtMemory(totalMemory)" icon="mdi:database" color="#f56c6c" />
+        <CardsStatCard title="总内存" :value="fmtMemory(totalMemory)" icon="mdi:database" color="#f56c6c" />
       </el-col>
     </el-row>
 
@@ -91,7 +91,7 @@ onMounted(async () => {
             <div class="card-header"><span>快速启动</span></div>
           </template>
           <div v-if="quickLinks.length" class="quick-grid">
-            <div v-for="p in quickLinks" :key="p.id" class="quick-item" @click="navigateTo(p.route)">
+            <div v-for="p in quickLinks" :key="p.id" class="quick-item" @click="navigateTo(pluginNav(p.route))">
               <IconRenderer :icon="p.icon" :size="22" />
               <span>{{ p.name }}</span>
             </div>

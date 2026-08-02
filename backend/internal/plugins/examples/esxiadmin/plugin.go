@@ -48,7 +48,9 @@ func (p *Plugin) Mount(rt *gin.RouterGroup, deps plugins.Deps) {
 	if deps.VMs == nil {
 		return
 	}
-	h := &handler{vm: deps.VMs}
+	h := &handler{vm: deps.VMs, provider: deps.Provider, webURL: deps.WebURL}
+	rt.GET("/config", h.config)
+	rt.GET("/health", h.config) // 兼容别名
 	rt.GET("/host", h.host)
 	rt.GET("/vms", h.listVMs)
 	rt.POST("/vms/:id/start", middleware.RequirePermission(domain.PERM_VM_START), h.start)
@@ -66,7 +68,21 @@ func (p *Plugin) StaticFS() fs.FS {
 }
 
 type handler struct {
-	vm plugins.VMServiceFacade
+	vm       plugins.VMServiceFacade
+	provider string
+	webURL   string
+}
+
+// config 返回平台连接状态与 Web 管理界面地址：
+// connected=true 表示当前为 ESXi 平台；web_url 为空表示未配置可嵌入的管理界面。
+func (h *handler) config(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"provider":  h.provider,
+			"connected": h.provider == "esxi",
+			"web_url":   h.webURL,
+		},
+	})
 }
 
 // host 返回宿主机信息。

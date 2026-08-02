@@ -56,7 +56,7 @@ func (f *fakeVMService) RestartVM(_ context.Context, id string) (*domain.VM, err
 
 var errInvalidOp = errors.New("invalid operation")
 
-func setupRouter(vm *fakeVMService) *gin.Engine {
+func setupRouter(vm *fakeVMService, provider, webURL string) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -64,12 +64,28 @@ func setupRouter(vm *fakeVMService) *gin.Engine {
 		c.Next()
 	})
 	p := New()
-	p.Mount(r.Group("/plugins/native/esxi-admin"), plugins.Deps{VMs: vm})
+	p.Mount(r.Group("/plugins/native/esxi-admin"), plugins.Deps{VMs: vm, Provider: provider, WebURL: webURL})
 	return r
 }
 
+func TestEsxiAdmin_Config(t *testing.T) {
+	r := setupRouter(&fakeVMService{}, "mock", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/plugins/native/esxi-admin/config", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"provider":"mock"`)
+	assert.Contains(t, w.Body.String(), `"connected":false`)
+	assert.Contains(t, w.Body.String(), `"web_url":""`)
+
+	r2 := setupRouter(&fakeVMService{}, "esxi", "https://esxi.lan/ui/")
+	w = httptest.NewRecorder()
+	r2.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/plugins/native/esxi-admin/config", nil))
+	assert.Contains(t, w.Body.String(), `"connected":true`)
+	assert.Contains(t, w.Body.String(), `"web_url":"https://esxi.lan/ui/"`)
+}
+
 func TestEsxiAdmin_Host(t *testing.T) {
-	r := setupRouter(&fakeVMService{host: &domain.HostInfo{Name: "esxi-1", Version: "8.0"}})
+	r := setupRouter(&fakeVMService{host: &domain.HostInfo{Name: "esxi-1", Version: "8.0"}}, "esxi", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/plugins/native/esxi-admin/host", nil))
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -86,7 +102,7 @@ func TestEsxiAdmin_ListAndPower(t *testing.T) {
 		{ID: "vm1", Name: "app-1", Status: domain.VMStatusPoweredOn, CPU: 2, MemoryMB: 4096},
 		{ID: "vm2", Name: "db-1", Status: domain.VMStatusPoweredOff},
 	}}
-	r := setupRouter(vmSvc)
+	r := setupRouter(vmSvc, "mock", "")
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/plugins/native/esxi-admin/vms", nil))
