@@ -1,0 +1,13 @@
+diff --git a/node_modules/nuxt/dist/index.mjs b/node_modules/nuxt/dist/index.mjs
+index d1458af..56ad483 100644
+--- a/node_modules/nuxt/dist/index.mjs
++++ b/node_modules/nuxt/dist/index.mjs
+@@ -6637,7 +6637,7 @@ const testComponentWrapperTemplate = {
+ };
+ const cssTemplate = {
+   filename: "css.mjs",
+-  getContents: (ctx) => ctx.nuxt.options.css.map((i) => genImport(i)).join("\n")
++  getContents: (ctx) => ctx.nuxt.options.css.map((i) => genImport(typeof i === "string" && ctx.nuxt.options.dev ? i + "?inline" : i)).join("\n")
+ };
+ const PLUGIN_TEMPLATE_RE = /_(?:45|46|47)/g;
+ const clientPluginTemplate = {

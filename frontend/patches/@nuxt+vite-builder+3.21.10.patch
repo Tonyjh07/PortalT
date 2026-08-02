@@ -1,0 +1,13 @@
+diff --git a/node_modules/@nuxt/vite-builder/dist/index.mjs b/node_modules/@nuxt/vite-builder/dist/index.mjs
+index a5a4732..b568cfc 100644
+--- a/node_modules/@nuxt/vite-builder/dist/index.mjs
++++ b/node_modules/@nuxt/vite-builder/dist/index.mjs
+@@ -169,7 +169,7 @@ function getManifest(nuxt, viteServer, clientEntry) {
+ 			});
+ 			if (!resolved) continue;
+ 			css.add("/@fs" + resolved.replace(/^(?!\/)/, "/"));
+-		} else css.add(resolved);
++		} else css.add("/@fs" + resolved.replace(/^(?!\/)/, "/"));
+ 	}
+ 	return normalizeViteManifest({
+ 		"@vite/client": {
