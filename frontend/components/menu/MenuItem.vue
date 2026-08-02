@@ -18,6 +18,11 @@
 import type { MenuItem } from '~/types'
 
 defineProps<{ item: MenuItem }>()
+
+// 插件一律导航到 /plugins<route>，由 pages/plugins/[...slug].vue 渲染
+function pluginNav(route: string) {
+  return route.startsWith('/plugins') ? route : `/plugins${route}`
+}
 </script>
 <style scoped>
 .menu-icon {

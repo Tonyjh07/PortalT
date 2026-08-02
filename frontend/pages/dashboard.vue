@@ -20,6 +20,11 @@ function fmtMemory(mb: number): string {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`
 }
 
+// 插件一律导航到 /plugins<route>，由 pages/plugins/[...slug].vue 渲染（与侧栏一致）
+function pluginNav(route: string) {
+  return route.startsWith('/plugins') ? route : `/plugins${route}`
+}
+
 onMounted(async () => {
   loading.value = true
   try {
