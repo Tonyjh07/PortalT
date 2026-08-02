@@ -98,9 +98,23 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 
 ## 生产部署说明
 
-- `npm run build` 产物（`.output/`）运行时不带 devProxy，需由反向代理拆分
-  `/api` 与页面流量。仓库 `caddy/Caddyfile` 已具备该路由（`/api/* → backend:8080`，
+- 生产构建不带 devProxy；`frontend/nuxt.config.ts` 的 `routeRules` 已为生产
+  `node .output/server/index.mjs`（`nuxt preview`）提供 `/api/**`、`/native/**`
+  到 `localhost:8080` 的反代（含 WS 升级），因此**单进程即可直连隧道**：
+  `cloudflared → http://127.0.0.1:3000(preview)`，无需 Caddy；
+- 需要容器化/多服务拆分时：`caddy/Caddyfile` 已具备路由（`/api/* → backend:8080`，
   `/* → frontend:3000`），Caddy 原生支持 WebSocket 升级；
-- 生产路径：`cloudflared → http://127.0.0.1:80(caddy) → frontend/backend`，
+- 生产路径（Caddy 版）：`cloudflared → http://127.0.0.1:80(caddy) → frontend/backend`，
   caddy 容器需 `extra_hosts` 指向宿主机，或全部容器化后走 compose 内部网络；
 - `docker-compose.yml` 中 caddy 已绑定 80/443，与隧道无冲突（隧道不占入站端口）。
+
+## dev 模式经隧道的已知问题
+
+- **不要用 dev 模式对外提供隧道访问**（本地调试例外）：
+  1. **慢**：dev 冷加载需实时 transform 上千个模块，经隧道逐个下载可达分钟级，期间白屏；
+  2. **全局 CSS MIME 报错**：`Failed to load module script ... MIME type of "text/css"`，
+     由 Vite 对同一 CSS URL 的 link/import 双形态 + 浏览器缓存引起（详见
+     `docs/conventions.md`「Nuxt dev 的全局 CSS 加载 bug」），已用 patch-package 修补；
+  3. **切换 dev ↔ preview 后**：浏览器缓存了旧 HTML，需**硬刷新（Ctrl+Shift+R）**，
+     否则会请求已不存在的 `/_nuxt/@vite/client`、`/_nuxt/C:/...` 等 dev 资源（404）。
+- 对外验证请用生产产物：`npm run build && node .output/server/index.mjs`（监听 3000）。

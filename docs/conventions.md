@@ -18,6 +18,15 @@
 - Go 模块名：`portalt`（仓库无远端，未用 github 路径）
 - **竞态检测（-race）**：需要原生 MinGW gcc。本机已装 WinLibs（winget 包 `BrechtSanders.WinLibs.MCF.UCRT`）。`make test-race` 会自动探测其路径并通过 `CC` 传给 go；不要依赖 msys64 的 cygwin gcc（报 "don't use the cygwin compiler" 错误）。注意 msys64 位于机器 PATH 中，优先级高于用户 PATH 的 WinLibs，因此必须走 Makefile 的 CC 探测
 
+### Nuxt dev 的全局 CSS 加载 bug（patch-package 修复）
+
+- **症状**：dev 模式首页出现 `Failed to load module script ... MIME type of "text/css"`（针对全局 CSS），经 Cloudflare Tunnel 访问时暴露；hard reload 可缓解、二次加载复现（Nuxt 已知问题，见 nuxt-modules/tailwindcss#613）
+- **根因（两层）**：
+  1. `@nuxt/vite-builder@3.21.10` `getManifest()`：`nuxt.options.css` 全局 CSS 解析为 Windows 绝对路径（`C:/...`）时原样写入 manifest（Unix 绝对路径 `/...` 本可直接用，盘符路径不行）→ HTML 出现 `/_nuxt/C:/...` 畸形 link；main 分支（Nuxt 4）已用 `toFsUrl()`（加 `/@fs` 前缀）修复
+  2. `nuxt/dist/index.mjs` 的 `cssTemplate`：`.nuxt/css.mjs` 虚拟模块 `import "/_nuxt/assets/css/main.css"` 与 HTML 的 `<link>` **同 URL 两种内容形态**（Vite 按请求头返回 CSS 原文或 JS 模块，但响应 `Vary` 只有 `Origin`）→ 浏览器缓存把 link 的 text/css 响应复用给 module import → MIME 报错。`?inline` 让 import 与 link 的 URL 分离（`main.css?inline` 返回 JS 模块、不注入样式，样式仍由 link 加载）
+- **修复（frontend/patches/）**：`@nuxt+vite-builder+3.21.10.patch` 绝对路径加 `/@fs` 前缀；`nuxt+3.21.10.patch` 全局 CSS import 追加 `?inline`——**必须仅 dev 生效**（`ctx.nuxt.options.dev` 判断），否则 `nuxt build` 会把全局 CSS 以 `?inline` 打进 JS 字符串且不注入，导致生产样式全丢（`html/body` 不铺满视口、背景/变量缺失）。`package.json` 的 `postinstall` 为 `patch-package && nuxt prepare`，重装依赖后自动应用
+- **重打补丁**：改 `node_modules/<pkg>/dist/*.mjs` 后跑 `npx patch-package <pkg>` 重新生成 patches；升级 nuxt 后需删除旧 patch 并确认上游已修复
+
 ## Go 依赖镜像（GOPROXY）
 
 本网络环境无法访问 `proxy.golang.org`（2026-08-01 下载 testify 时超时）。
