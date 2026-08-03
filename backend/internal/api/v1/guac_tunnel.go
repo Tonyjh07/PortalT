@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -120,6 +121,15 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 		clientConn.Close()
 	}
 
+	// 两个转发 goroutine 都会写 clientConn，gorilla/websocket 不支持并发写
+	// （ping 回显与 guacd 数据转发同时发生时 panic），必须串行化。
+	var writeMu sync.Mutex
+	write := func(msg []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return clientConn.WriteMessage(websocket.TextMessage, msg)
+	}
+
 	// 客户端 → guacd：内部指令（稳定性 ping）回显给客户端，其余原样转发
 	go func() {
 		defer func() { done <- struct{}{} }()
@@ -130,7 +140,7 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 				return
 			}
 			if bytes.HasPrefix(data, internalOpcodePrefix) {
-				_ = clientConn.WriteMessage(websocket.TextMessage, data)
+				_ = write(data)
 				continue
 			}
 			for _, raw := range splitInstructions(data) {
@@ -151,8 +161,27 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 				abort()
 				return
 			}
-			if err := clientConn.WriteMessage(websocket.TextMessage, raw); err != nil {
+			if err := write(raw); err != nil {
 				abort()
+				return
+			}
+		}
+	}()
+
+	// keepalive：guacd 1.5.x 对用户输入有 15 秒超时（GUACAMOLE-2233），
+	// Chrome/Edge 降频 keepalive 后会触发超时导致 "User is not responding"。
+	// 后端定期发送 nop 指令重置该计时器。
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		nop := []byte("3.nop;")
+		for {
+			select {
+			case <-ticker.C:
+				if _, err := stream.Write(nop); err != nil {
+					return
+				}
+			case <-done:
 				return
 			}
 		}
@@ -190,16 +219,21 @@ func guacConfigFromVM(vm *domain.VM) guac.Config {
 	return guac.Config{
 		Protocol: protocol,
 		Parameters: map[string]string{
-			"hostname":              host,
-			"port":                  port,
-			"username":              metadataString(vm, "guac.username"),
-			"password":              metadataString(vm, "guac.password"),
-			"domain":                metadataString(vm, "guac.domain"),
-			"security":              metadataString(vm, "guac.security"),
-			"read-only":             metadataString(vm, "guac.read-only"),
-			"autoretry":             metadataString(vm, "guac.autoretry"),
-			"color-depth":           metadataString(vm, "guac.color-depth"),
-			"create-recording-path": metadataString(vm, "guac.create-recording-path"),
+			"hostname":               host,
+			"port":                   port,
+			"username":               metadataString(vm, "guac.username"),
+			"password":               metadataString(vm, "guac.password"),
+			"domain":                 metadataString(vm, "guac.domain"),
+			"security":               metadataString(vm, "guac.security"),
+			"ignore-cert":            metadataString(vm, "guac.ignore-cert"),
+			"read-only":              metadataString(vm, "guac.read-only"),
+			"autoretry":              metadataString(vm, "guac.autoretry"),
+			"color-depth":            metadataString(vm, "guac.color-depth"),
+			"disable-bitmap-caching": metadataString(vm, "guac.disable-bitmap-caching"),
+			"enable-wallpaper":       metadataString(vm, "guac.enable-wallpaper"),
+			"enable-theming":         metadataString(vm, "guac.enable-theming"),
+			"enable-font-smoothing":  metadataString(vm, "guac.enable-font-smoothing"),
+			"create-recording-path":  metadataString(vm, "guac.create-recording-path"),
 		},
 		OptimalScreenWidth:  width,
 		OptimalScreenHeight: height,
