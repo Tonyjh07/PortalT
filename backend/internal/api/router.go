@@ -70,6 +70,7 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		vms.POST("/:id/start", middleware.RequirePermission(domain.PERM_VM_START), hs.VM.Start)
 		vms.POST("/:id/stop", middleware.RequirePermission(domain.PERM_VM_STOP), hs.VM.Stop)
 		vms.POST("/:id/restart", middleware.RequirePermission(domain.PERM_VM_RESTART), hs.VM.Restart)
+		vms.PUT("/:id/metadata", middleware.RequirePermission(domain.PERM_VM_MANAGE), hs.VM.UpdateMetadata)
 
 		// 动态菜单（plugin:view）
 		protected.GET("/menu", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW), hs.Menu.Menu)

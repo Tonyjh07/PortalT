@@ -81,6 +81,27 @@ func (h *VMHandler) Status(c *gin.Context) {
 	})
 }
 
+// UpdateMetadata PUT /api/v1/vms/:id/metadata
+// 合并更新虚拟机 metadata（如远程桌面参数 guac.*），需 vm:manage 权限。
+// body 为键值对象；值为 null 的键删除。
+func (h *VMHandler) UpdateMetadata(c *gin.Context) {
+	var patch map[string]any
+	if err := c.ShouldBindJSON(&patch); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "请求体必须是 JSON 对象")
+		return
+	}
+	vm, err := h.svc.UpdateMetadata(c.Request.Context(), c.Param("id"), patch)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			response.Error(c, http.StatusNotFound, response.CodeNotFound, "虚拟机不存在")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "更新虚拟机配置失败")
+		return
+	}
+	response.OK(c, vm)
+}
+
 // powerOp 电源操作统一处理：校验错误映射 + 成功返回最新状态。
 func (h *VMHandler) powerOp(c *gin.Context, verb string, fn func(ctx context.Context, id string) (*domain.VM, error)) {
 	vm, err := fn(c.Request.Context(), c.Param("id"))

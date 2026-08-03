@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -42,6 +43,7 @@ func setupVMEnv(t *testing.T) *vmEnv {
 	r.POST("/vms/:id/start", handler.Start)
 	r.POST("/vms/:id/stop", handler.Stop)
 	r.POST("/vms/:id/restart", handler.Restart)
+	r.PUT("/vms/:id/metadata", handler.UpdateMetadata)
 
 	return &vmEnv{router: r, repo: repo, provider: provider}
 }
@@ -148,5 +150,45 @@ func TestVMHandler_Restart_Success(t *testing.T) {
 func TestVMHandler_PowerOp_NotFound(t *testing.T) {
 	env := setupVMEnv(t)
 	w := vmRequest(env.router, http.MethodPost, "/vms/ghost/start")
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestVMHandler_UpdateMetadata_Success(t *testing.T) {
+	env := setupVMEnv(t)
+	body := strings.NewReader(`{"guac.protocol":"rdp","guac.hostname":"10.0.0.9","guac.port":null}`)
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	data := vmBody(t, w)["data"].(map[string]any)
+	md := data["metadata"].(map[string]any)
+	assert.Equal(t, "rdp", md["guac.protocol"])
+	assert.Equal(t, "10.0.0.9", md["guac.hostname"])
+	_, ok := md["guac.port"]
+	assert.False(t, ok) // null 删除
+
+	// 仓储持久化
+	vm, err := env.repo.FindByID("vm-mock-1")
+	require.NoError(t, err)
+	assert.Equal(t, "rdp", vm.Metadata["guac.protocol"])
+}
+
+func TestVMHandler_UpdateMetadata_BadBody(t *testing.T) {
+	env := setupVMEnv(t)
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata", strings.NewReader(`not-json`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestVMHandler_UpdateMetadata_NotFound(t *testing.T) {
+	env := setupVMEnv(t)
+	req := httptest.NewRequest(http.MethodPut, "/vms/ghost/metadata", strings.NewReader(`{"a":"b"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }

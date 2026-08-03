@@ -185,6 +185,92 @@ func TestVMService_SyncVMs_SkipsInvalid(t *testing.T) {
 	assert.Len(t, all, 1)
 }
 
+func TestVMService_SyncVMs_MergesMetadata(t *testing.T) {
+	svc, repo, provider := newTestService()
+	// 库内已有手动配置的远程桌面参数
+	require.NoError(t, repo.Save(&domain.VM{
+		ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn,
+		Metadata: map[string]any{
+			"guac.protocol": "vnc",
+			"guac.hostname": "10.0.0.5",
+			"guac.port":     "5900",
+			"moid":          "old", // 模拟平台同步过的键
+		},
+	}))
+	// 提供者返回的 VM 不含 guac.*，但带平台自己的键
+	provider.vms = []*domain.VM{{
+		ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff,
+		Metadata: map[string]any{"moid": "new"},
+	}}
+
+	_, err := svc.SyncVMs(context.Background())
+	require.NoError(t, err)
+
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	// 手动配置的 guac.* 保留，平台键以提供者为准
+	assert.Equal(t, "vnc", stored.Metadata["guac.protocol"])
+	assert.Equal(t, "10.0.0.5", stored.Metadata["guac.hostname"])
+	assert.Equal(t, "5900", stored.Metadata["guac.port"])
+	assert.Equal(t, "new", stored.Metadata["moid"])
+	// 状态照常同步
+	assert.Equal(t, domain.VMStatusPoweredOff, stored.Status)
+}
+
+func TestVMService_SyncVMs_MetadataNilKeepsStored(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{
+		ID: "vm-1", Name: "web",
+		Metadata: map[string]any{"guac.protocol": "rdp"},
+	}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web"}} // provider 无 metadata
+
+	_, err := svc.SyncVMs(context.Background())
+	require.NoError(t, err)
+
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, "rdp", stored.Metadata["guac.protocol"])
+}
+
+func TestVMService_UpdateMetadata(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{
+		ID: "vm-1", Name: "web",
+		Metadata: map[string]any{"guac.protocol": "vnc"},
+	}))
+
+	vm, err := svc.UpdateMetadata(context.Background(), "vm-1", map[string]any{
+		"guac.hostname": "10.0.0.9",
+		"guac.protocol": "rdp",
+		"guac.port":     nil, // null 删除
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "rdp", vm.Metadata["guac.protocol"])
+	assert.Equal(t, "10.0.0.9", vm.Metadata["guac.hostname"])
+	_, ok := vm.Metadata["guac.port"]
+	assert.False(t, ok)
+
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.9", stored.Metadata["guac.hostname"])
+}
+
+func TestVMService_UpdateMetadata_NotFound(t *testing.T) {
+	svc, _, _ := newTestService()
+	_, err := svc.UpdateMetadata(context.Background(), "ghost", map[string]any{"a": "b"})
+	assert.ErrorIs(t, err, ports.ErrNotFound)
+}
+
+func TestVMService_UpdateMetadata_InitializesNil(t *testing.T) {
+	svc, repo, _ := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web"}))
+
+	vm, err := svc.UpdateMetadata(context.Background(), "vm-1", map[string]any{"guac.protocol": "ssh"})
+	require.NoError(t, err)
+	assert.Equal(t, "ssh", vm.Metadata["guac.protocol"])
+}
+
 func TestVMService_ListVMs(t *testing.T) {
 	svc, repo, _ := newTestService()
 	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web"}))
@@ -232,6 +318,25 @@ func TestVMService_GetVMStatus(t *testing.T) {
 	stored, err := repo.FindByID("vm-1")
 	require.NoError(t, err)
 	assert.Equal(t, domain.VMStatusPoweredOff, stored.Status)
+}
+
+func TestVMService_GetVMStatus_MergesMetadata(t *testing.T) {
+	svc, repo, provider := newTestService()
+	require.NoError(t, repo.Save(&domain.VM{
+		ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOn,
+		Metadata: map[string]any{"guac.protocol": "vnc"},
+	}))
+	provider.vms = []*domain.VM{{ID: "vm-1", Name: "web", Status: domain.VMStatusPoweredOff}}
+
+	vm, err := svc.GetVMStatus(context.Background(), "vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusPoweredOff, vm.Status)
+	// 回刷时保留手动配置的 metadata
+	assert.Equal(t, "vnc", vm.Metadata["guac.protocol"])
+
+	stored, err := repo.FindByID("vm-1")
+	require.NoError(t, err)
+	assert.Equal(t, "vnc", stored.Metadata["guac.protocol"])
 }
 
 func TestVMService_GetVMStatus_ProviderDown_FallsBack(t *testing.T) {
