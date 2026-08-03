@@ -15,6 +15,11 @@ frontend/dist/
 *.pem
 *.key
 
+# 数据库文件（本地运行时产生）
+*.db
+*.db-wal
+*.db-shm
+
 # IDE / 系统
 .idea/
 .vscode/
