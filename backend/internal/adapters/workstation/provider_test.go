@@ -20,6 +20,8 @@ type vmrestHandler struct {
 	password  string
 	vms       []map[string]any // GET /api/vms 返回的列表条目
 	details   map[string]map[string]any
+	power     map[string]string // GET /api/vms/<id>/power 返回的电源状态（真实 vmrest 状态在此接口）
+	ips       map[string]string // GET /api/vms/<id>/ip 返回的 IP（真实 vmrest IP 在此接口）
 	host      map[string]any
 	hostOK    bool
 	lastOp    string // 最近一次电源操作 body
@@ -53,9 +55,21 @@ func (h *vmrestHandler) serve() *httptest.Server {
 				_ = json.NewEncoder(w).Encode(map[string]string{"power_state": "poweredOn"})
 				return
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"power_state": "poweredOn"})
-			return
+		if st, ok := h.power[id]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]string{"power_state": st})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
 		}
+		return
+	}
+	if len(seg) > 1 && seg[1] == "ip" {
+		if ip, ok := h.ips[id]; ok {
+			_ = json.NewEncoder(w).Encode(map[string]string{"ip": ip})
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+		return
+	}
 		d, ok := h.details[id]
 		if !ok {
 			w.WriteHeader(http.StatusNotFound)
@@ -103,17 +117,17 @@ func TestListVMs_Fields(t *testing.T) {
 		details: map[string]map[string]any{
 			"VMID01": {
 				"name":           "ubuntu-dev",
-				"power_state":    "on",
 				"num_cpu":        4,
 				"memory_size_MiB": float64(4096),
-				"ip_address":     "192.168.88.10",
 			},
 			"VMID02": { // 老版本字段命名（子对象 + poweredOff）
-				"power_state": "poweredOff",
-				"cpu":         map[string]any{"processors": float64(2)},
-				"memory":      map[string]any{"memory_MiB": float64(2048)},
+				"cpu":    map[string]any{"processors": float64(2)},
+				"memory": map[string]any{"memory_MiB": float64(2048)},
 			},
 		},
+		// 真实 vmrest：电源状态在 /power 子接口，IP 在 /ip 子接口
+		power: map[string]string{"VMID01": "on", "VMID02": "poweredOff"},
+		ips:   map[string]string{"VMID01": "192.168.88.10"},
 	}
 	p, srv := testProvider(t, h)
 	defer srv.Close()
@@ -129,7 +143,7 @@ func TestListVMs_Fields(t *testing.T) {
 	assert.Equal(t, 4, vm1.CPU)
 	assert.Equal(t, 4096, vm1.MemoryMB)
 	assert.Equal(t, "192.168.88.10", vm1.IPAddress)
-	assert.Equal(t, "192.168.88.10", vm1.Metadata["guac.hostname"])
+	assert.Empty(t, vm1.Metadata) // IP 走领域字段，不写 metadata（避免覆盖手动配置）
 
 	vm2 := vms[1]
 	assert.Equal(t, "win10", vm2.Name) // 无 name 时回退 vmx 文件名
@@ -149,10 +163,11 @@ func TestListVMs_AuthAndStatusVariants(t *testing.T) {
 			{"id": "C", "path": "c.vmx"},
 		},
 		details: map[string]map[string]any{
-			"A": {"power_state": "suspended"},
-			"B": {"power_state": "weird-state"},
-			"C": {"power_state": "poweredOn", "name": "c"},
+			"A": {"name": "a"},
+			"B": {"name": "b"},
+			"C": {"name": "c"},
 		},
+		power: map[string]string{"A": "suspended", "C": "poweredOn"}, // B 无 power 记录 → unknown
 	}
 	p, srv := testProvider(t, h)
 	defer srv.Close()
@@ -180,6 +195,27 @@ func TestListVMs_ConnectionRefused(t *testing.T) {
 	_, err := p.ListVMs()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "请求 /api/vms 失败")
+}
+
+func TestListVMs_EmbeddedStateWins(t *testing.T) {
+	// 老版本 vmrest：详情内嵌 power_state，不依赖 /power 子接口
+	h := &vmrestHandler{
+		username: "u1",
+		password: "p1",
+		vms: []map[string]any{
+			{"id": "A", "path": "a.vmx"},
+		},
+		details: map[string]map[string]any{
+			"A": {"power_state": "weird-state"}, // 详情里有值则直接用，不查子接口
+		},
+	}
+	p, srv := testProvider(t, h)
+	defer srv.Close()
+
+	vms, err := p.ListVMs()
+	require.NoError(t, err)
+	assert.Equal(t, domain.VMStatusUnknown, vms[0].Status)
+	assert.Empty(t, h.power) // 未触发子接口查询
 }
 
 func TestPowerOps(t *testing.T) {

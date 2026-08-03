@@ -112,6 +112,9 @@ func (p *Provider) listEntries() ([]listEntry, error) {
 }
 
 // vmDetail 查询单台虚拟机详情并映射为领域实体。
+// 真实 vmrest 的详情接口仅返回 id/cpu/memory（不包含电源状态与 IP），
+// 电源状态需额外查询 /api/vms/<id>/power 子接口，IP 需查询 /api/vms/<id>/ip；
+// 老版本可能内嵌在详情中，两者均兼容。
 func (p *Provider) vmDetail(e listEntry) (*domain.VM, error) {
 	var raw map[string]any
 	if err := p.doJSON("GET", "/api/vms/"+e.ID, nil, &raw); err != nil {
@@ -123,21 +126,46 @@ func (p *Provider) vmDetail(e listEntry) (*domain.VM, error) {
 		name = baseName(e.Path)
 	}
 
+	status := mapPowerState(strValue(raw, "power_state", "state"))
+	if status == domain.VMStatusUnknown {
+		status = p.queryPowerState(e.ID)
+	}
+
+	ip := strValue(raw, "ip_address", "ip")
+	if ip == "" {
+		ip = p.queryIP(e.ID) // 详情缺失时查子接口（关机/无 Tools 时 404，容错为空）
+	}
+
 	vm := &domain.VM{
 		ID:        e.ID,
 		Name:      name,
-		Status:    mapPowerState(strValue(raw, "power_state", "state")),
+		Status:    status,
 		CPU:       intValue(raw, "num_cpu", "cpu", "processors"),
 		MemoryMB:  intValue(raw, "memory_size_MiB", "memory_size", "memory_MiB", "size_MiB", "memory"),
 		Host:      "Workstation",
-		IPAddress: strValue(raw, "ip_address", "ip"),
+		IPAddress: ip,
 		Metadata:  map[string]any{},
 	}
-	// 取到 IP 时写入远程桌面默认目标，便于开箱调试
-	if vm.IPAddress != "" {
-		vm.Metadata["guac.hostname"] = vm.IPAddress
-	}
 	return vm, nil
+}
+
+// queryIP 查询虚拟机 IP（子接口 /ip，返回 {"ip": "..."}）。
+// 接口不可用（VM 关机/未装 Tools）时返回空串，不阻断列表。
+func (p *Provider) queryIP(id string) string {
+	var raw map[string]any
+	if err := p.doJSON("GET", "/api/vms/"+id+"/ip", nil, &raw); err != nil {
+		return ""
+	}
+	return strValue(raw, "ip", "ip_address")
+}
+
+// queryPowerState 查询电源子接口获取状态；接口不可用时返回 unknown（不阻断列表）。
+func (p *Provider) queryPowerState(id string) domain.VMStatus {
+	var pwr map[string]any
+	if err := p.doJSON("GET", "/api/vms/"+id+"/power", nil, &pwr); err != nil {
+		return domain.VMStatusUnknown
+	}
+	return mapPowerState(strValue(pwr, "power_state", "state"))
 }
 
 // StartVM 启动指定虚拟机。
