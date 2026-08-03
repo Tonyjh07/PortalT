@@ -16,6 +16,8 @@ let timer: ReturnType<typeof setInterval> | null = null
 const rdCardRef = ref<{ $el: HTMLElement } | null>(null)
 const isFullscreen = ref(false)
 const rdState = reactive({ connecting: false, connected: false })
+// 远程桌面配置对话框打开时暂停全局键盘监听（否则弹窗内无法输入）
+const rdConfigOpen = ref(false)
 
 function toggleFullscreen() {
   const el = rdCardRef.value?.$el
@@ -118,7 +120,7 @@ onUnmounted(stopPolling)
             <template #header><span>基本信息</span></template>
             <el-descriptions :column="1" size="small">
               <el-descriptions-item label="ID">{{ vm.id }}</el-descriptions-item>
-              <el-descriptions-item label="IP 地址">{{ vm.ip_address || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="IP 地址">{{ vm.ip_address || vm.metadata?.['guac.hostname'] || '-' }}</el-descriptions-item>
               <el-descriptions-item label="宿主机">{{ vm.host || '-' }}</el-descriptions-item>
               <el-descriptions-item label="CPU">{{ vm.cpu }} 核</el-descriptions-item>
               <el-descriptions-item label="内存">
@@ -127,23 +129,14 @@ onUnmounted(stopPolling)
             </el-descriptions>
           </el-card>
 
-          <el-card shadow="never" class="mb-3">
-            <template #header>
-              <span>资源使用</span>
-              <span class="meta-hint">由平台提供</span>
-            </template>
-            <div class="usage-item">
-              <span>CPU 核数</span>
-              <el-progress :percentage="Math.min(100, vm.cpu * 10)" :stroke-width="10" />
-            </div>
-            <div class="usage-item">
-              <span>内存</span>
-              <el-progress
-                :percentage="Math.min(100, Math.round((vm.memory_mb / 16384) * 100))"
-                :stroke-width="10"
-                status="success"
-              />
-            </div>
+          <el-card shadow="never">
+            <template #header><span>扩展信息</span></template>
+            <el-descriptions :column="1" size="small">
+              <el-descriptions-item v-for="item in displayMetadata" :key="item.key" :label="item.key">
+                {{ item.value }}
+              </el-descriptions-item>
+            </el-descriptions>
+            <el-empty v-if="!displayMetadata.length" description="无扩展信息" :image-size="60" />
           </el-card>
         </el-col>
 
@@ -156,6 +149,12 @@ onUnmounted(stopPolling)
                   <el-tag v-if="rdState.connected" type="success" size="small" effect="plain">已连接</el-tag>
                   <el-tag v-else-if="rdState.connecting" type="info" size="small" effect="plain">连接中</el-tag>
                   <el-tag v-else type="warning" size="small" effect="plain">未连接</el-tag>
+                  <VmRemoteDesktopConfig
+                    :vm="vm"
+                    @changed="loadVM"
+                    @open="rdConfigOpen = true"
+                    @close="rdConfigOpen = false"
+                  />
                 </div>
               </div>
             </template>
@@ -171,22 +170,13 @@ onUnmounted(stopPolling)
             <VmRemoteDesktop
               v-if="vm.status === 'poweredOn'"
               :vm="vm"
+              :paused="rdConfigOpen"
               @state="onRdState"
             />
             <div v-else class="rd-placeholder">
               <IconRenderer icon="mdi:desktop" :size="48" />
               <p>虚拟机未开机，启动后可打开浏览器远程桌面</p>
             </div>
-          </el-card>
-
-          <el-card shadow="never">
-            <template #header><span>扩展信息</span></template>
-            <el-descriptions :column="1" size="small">
-              <el-descriptions-item v-for="item in displayMetadata" :key="item.key" :label="item.key">
-                {{ item.value }}
-              </el-descriptions-item>
-            </el-descriptions>
-            <el-empty v-if="!displayMetadata.length" description="无扩展信息" :image-size="60" />
           </el-card>
         </el-col>
       </el-row>
@@ -222,20 +212,42 @@ onUnmounted(stopPolling)
   justify-content: space-between;
 }
 
-.meta-hint {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
+/* 全屏模式：卡片占满视口，画布区域撑满剩余空间 */
+.rd-card:fullscreen {
+  display: flex;
+  flex-direction: column;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  border-radius: 0;
+  overflow: hidden;
 }
 
-.usage-item {
-  margin-bottom: 12px;
+.rd-card:fullscreen :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  overflow: hidden;
 }
 
-.usage-item > span {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
+.rd-card:fullscreen .rd-conn-info {
+  flex: none;
+  margin-bottom: 8px;
+}
+
+.rd-card:fullscreen :deep(.remote-desktop) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rd-card:fullscreen :deep(.rd-canvas) {
+  flex: 1;
+  min-height: 0;
+  height: auto;
 }
 
 .rd-placeholder {

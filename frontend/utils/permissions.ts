@@ -1,7 +1,7 @@
 import type { Role, User } from '~/types'
 
 const ROLE_PERMS: Record<Role, string[]> = {
-  admin: ['vm:start', 'vm:stop', 'vm:restart', 'plugin:view', 'plugin:manage', 'user:manage'],
+  admin: ['vm:start', 'vm:stop', 'vm:restart', 'vm:manage', 'plugin:view', 'plugin:manage', 'user:manage'],
   user: ['vm:start', 'vm:stop', 'vm:restart', 'plugin:view'],
   viewer: [],
 }
