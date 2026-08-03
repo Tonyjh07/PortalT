@@ -280,9 +280,9 @@ vmrest               # 启动服务（HTTPS 需 -c 证书 -k 私钥）
 ```
 
 - 配置：`VIRT_PROVIDER=workstation` + `VIRT_WS_URL/USERNAME/PASSWORD/INSECURE`（url 缺省本机 8697）
-- 端点：`GET /api/vms` → id+path 列表，详情逐台查询；`PUT /api/vms/{id}/power` body 为裸字符串 `on/off/reset`，Content-Type `application/vnd.vmware.vmw.rest-v1+json`；`GET /api/vms/{id}/ipaddress`；`GET /api/host`（404 时回退最小信息）
-- 容错：状态映射对 `on`/`poweredOn` 等大小写变体归一；CPU/内存支持新旧字段名及子对象（`cpu.processors`、`memory.memory_MiB`）；name 缺省回退 vmx 文件名
-- 远程桌面：`guac.hostname` 自动写入虚拟机 IP（若详情可取得），方便 guacd 隧道开箱调试
+- 端点：`GET /api/vms` → id+path 列表，详情逐台查询；`PUT /api/vms/{id}/power` body 为裸字符串 `on/off/reset`，Content-Type `application/vnd.vmware.vmw.rest-v1+json`；`GET /api/vms/{id}/ip`（返回 `{"ip": "..."}`，关机/无 Tools 时 404 容错为空）；`GET /api/host`（404 时回退最小信息）
+- 容错：状态映射对 `on`/`poweredOn` 等大小写变体归一；CPU/内存支持新旧字段名及子对象（`cpu.processors`、`memory.memory_MiB`）；name 缺省回退 vmx 文件名；电源状态取 `/power` 子接口、IP 取 `/ip` 子接口（详情接口仅含 id/cpu/memory）
+- 远程桌面：IP 写入 `vm.ip_address` 字段，guacd 隧道缺省回退到该 IP 作为目标（无需写 metadata；手动配置 `guac.hostname` 优先级更高）
 
 ### 提供者工厂（internal/adapters/virt_factory.go）
 

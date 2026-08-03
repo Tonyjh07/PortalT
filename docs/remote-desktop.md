@@ -19,7 +19,11 @@ guacd :4822
 
 - 协议握手（select/args/size/connect/ready）由 **PortalT 服务端**完成，浏览器只负责渲染与输入；
 - 连接参数全部来自 VM 的 `guac.*` 元数据，浏览器侧**无法覆盖**目标主机与凭证（安全边界）；
-- 客户机的稳定性 ping 由 PortalT 回显，不转发 guacd。
+- 客户机的稳定性 ping 由 PortalT 回显，不转发 guacd；
+- **服务端 keepalive**：每 10 秒向 guacd 发送 `3.nop;`，规避 guacd 1.5.x 的用户输入
+  15 秒超时（[GUACAMOLE-2233](https://issues.apache.org/jira/browse/GUACAMOLE-2233)）——
+  Chrome/Edge 会把 keepalive 降频到 37–60 秒，不做处理会触发
+  "User is not responding" 而断连。
 
 ## 前提条件
 
@@ -44,8 +48,13 @@ guacd :4822
 | `guac.username` / `guac.password` | 视目标而定 | 登录凭证（password 不会展示在前端详情页） |
 | `guac.width` / `guac.height` | 否 | 初始分辨率（默认 1280×800） |
 | `guac.security` / `guac.domain` / `guac.read-only` / `guac.autoretry` / `guac.color-depth` | 否 | 透传协议参数（rdp security、vnc 只读等） |
+| `guac.ignore-cert` | 否 | RDP 忽略证书校验（自签证书环境建议 `true`） |
+| `guac.disable-bitmap-caching` / `guac.enable-wallpaper` / `guac.enable-theming` / `guac.enable-font-smoothing` | 否 | 透传 RDP 渲染参数（位图缓存、壁纸/主题/字体平滑；Win10 黑屏时壁纸参数可改善） |
 
-示例：
+配置方式（二选一）：
+
+1. **前端配置面板（推荐）**：VM 详情页 → 「远程桌面」卡片右上角「配置」按钮（仅管理员）→ 填写协议/目标/端口/用户名/密码 → 保存（写入 metadata，密码为空则清除该键）。
+2. **API**：`PUT /api/v1/vms/:id/metadata`（需 `vm:manage` 权限，body 为键值对象，值为 `null` 的键删除）。示例：
 
 ```json
 {
@@ -55,6 +64,8 @@ guacd :4822
   "guac.password": "vm-password"
 }
 ```
+
+> 注意：`SyncVMs`/状态轮询采用 metadata 合并策略——提供者未提供的键保留库内值，手动配置不会被平台同步覆盖（workstation 适配器 IP 走 `ip_address` 字段，不写 metadata）。
 
 ## 使用步骤
 
@@ -112,6 +123,9 @@ Nuxt `nitro devProxy` 对 WebSocket 升级的转发并不可靠（见 [nuxt/cli#
 | 现象 | 原因与处理 |
 |------|-----------|
 | 详情页无「远程桌面」卡片 | VM 未开机（`poweredOn` 才显示）；检查状态 |
+| 桌面黑屏但有鼠标光标 | **前端 CSS 层叠问题**（非连接问题）：guacamole-common-js 画布为 `z-index:-1` 绝对定位，若容器未创建 stacking context，画布会沉到容器黑背景之下。`.rd-canvas` 已加 `position: relative; z-index: 0`，改动后需重建前端 |
+| 连接一段时间后断连（"User is not responding"） | guacd 1.5.x 用户输入 15 秒超时；后端 keepalive 每 10 秒发 `nop` 已规避，确认后端为最新构建 |
+| 全屏后画面不占满视口 | `.rd-card:fullscreen` 已配置 flex 布局（卡片 100vw/100vh，画布撑满剩余空间），并监听 `fullscreenchange` 重适配；改动后需重建前端 |
 | WS 连接失败 / 401 | 访问令牌过期（15 分钟）；刷新页面重新登录即可 |
 | 握手失败（Close 1001 内部错误） | guacd 未启动、`GUACD_URL` 配错、目标主机不可达或凭证错误；查后端日志 |
 | 升级被返回 200/404 | dev 模式代理问题：确认 `frontend/modules/wsProxy.ts` 已加载（重启 `npm run dev`） |

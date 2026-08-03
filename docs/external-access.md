@@ -2,28 +2,28 @@
 
 > 从外网访问 PortalT 的推荐方案：`cloudflared` 隧道出站连接 Cloudflare 边缘，
 > **无需开放任何入站端口/防火墙规则**，适合 HomeLab 场景（无公网 IP、运营商 NAT）。
-> 本指南以 Windows 宿主机 + Nuxt dev 模式为例；生产部署见文末。
+> 本指南以 Windows 宿主机 + Caddy 反代（生产构建）为例。
 
 ## 架构
 
 ```
 浏览器 ──https──> Cloudflare 边缘 ──隧道(出站)──> cloudflared(本机)
-                                                    │
-                                                    ▼
-                                        http://127.0.0.1:3000 (Nuxt dev)
-                                                    │  /api 代理(含 WS)
-                                                    ▼
-                                        http://127.0.0.1:8080 (PortalT 后端)
-                                                    │  guacd 指令流
-                                                    ▼
-                                        guacd :4822 → VNC/RDP 目标机
+                                                     │
+                                                     ▼
+                                        Caddy :3000  (本地反代，原生支持 WS 升级)
+                                        ├── /api/*、/native/* → 127.0.0.1:8080 (后端)
+                                        └── 其余(页面/静态资源) → 127.0.0.1:3001 (Nuxt preview)
+                                                     │  guacd 指令流
+                                                     ▼
+                                         guacd :4822 → VNC/RDP 目标机
 ```
 
 - cloudflared 主动连出到 Cloudflare，入站 80/443 全部由 CF 边缘接管；
-- 页面/API/WebSocket 全部经同一条隧道（cloudflared 原生透传 WS，仅需在
-  Cloudflare 后台确认该域名的 **WebSockets 已启用**，免费版默认开启）；
+- **必须用 Caddy 反代**：Nuxt 生产构建（`node .output/server/index.mjs`）的 `routeRules`
+  反代**不支持 WebSocket 升级**（返回 400），而远程桌面依赖 WS 长连接；
+  Caddy 的 `reverse_proxy` 原生透传 WS，是本地补齐该缺口的最简方案；
 - 前端 WS 地址是相对路径（`/api/v1/guac/ws/...`），浏览器自动使用
-  `wss://<域名>/...`，无需改动代码。
+  `wss://<域名>/...` 走隧道 → Caddy → 后端，无需改动代码。
 
 ## 一、cloudflared 安装与登录
 
@@ -53,6 +53,10 @@ cloudflared tunnel route dns portalt demo.tonyjh07.dpdns.org
 cloudflared tunnel run portalt           # 前台运行（生产可用 NSSM/服务方式）
 ```
 
+> 本机隧道实际为 **Zero Trust token 模式**（服务运行参数
+> `cloudflared tunnel run --token-file <token>`），入口规则在 Cloudflare 控制台
+> （Zero Trust → Networks → Tunnels）配置，全部流量指向 `http://127.0.0.1:3000`。
+
 ## 四、本地服务要求（关键点）
 
 1. **前端 dev server 固定监听 127.0.0.1**（`nuxt.config.ts` 的 `devServer.host`），
@@ -70,7 +74,40 @@ cloudflared tunnel run portalt           # 前台运行（生产可用 NSSM/服�
    ```
 
 3. 后端 `:8080`、guacd `:4822` 均在 cloudflared 所在宿主机，无需对外暴露；
-   `/api` 与 WS 由 dev 模式 `nitro.devProxy` + `frontend/modules/wsProxy.ts` 转发。
+4. **Caddy 监听 3000**（隧道入口），把 `/api/*`、`/native/*` 转发到后端 8080，
+   其余转发到 Nuxt preview（生产构建监听 3001），Caddyfile 见下节。
+
+## 四·五、Caddy 反代（推荐，生产入口）
+
+```text
+# Caddyfile（监听 3000 作为隧道入口；Caddy 原生支持 WebSocket 升级）
+:3000 {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /native/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
+}
+```
+
+启动（Windows，示例路径）：
+
+```powershell
+caddy run --config C:\path\to\Caddyfile --adapter caddyfile
+```
+
+> - 本机 Caddy 由 Go 源码编译安装（`go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4`，
+>   winget 因外网不通不可用），二进制在 `%USERPROFILE%\go\bin\caddy.exe`；
+> - 前端预览监听 3001：`node .output/server/index.mjs`（nitro 默认 3000，
+>   用 `PORT=3001` 或 nitro 配置覆盖）；`NUXT_PUBLIC_API_WS_BASE` **留空**
+>   （同源 `wss://<域名>/api/...` 走隧道 → Caddy → 后端）；
+> - 验证命令（本机模拟隧道）：
+>   - 页面：`Invoke-WebRequest http://127.0.0.1:3000/`（200）
+>   - WS：`ws://127.0.0.1:3000/api/v1/guac/ws/<vmId>?token=<token>`（应 OPENED 并收到渲染指令）
 
 ## 五、验证
 
@@ -98,15 +135,13 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 
 ## 生产部署说明
 
-- 生产构建不带 devProxy；`frontend/nuxt.config.ts` 的 `routeRules` 已为生产
-  `node .output/server/index.mjs`（`nuxt preview`）提供 `/api/**`、`/native/**`
-  到 `localhost:8080` 的反代（含 WS 升级），因此**单进程即可直连隧道**：
-  `cloudflared → http://127.0.0.1:3000(preview)`，无需 Caddy；
-- 需要容器化/多服务拆分时：`caddy/Caddyfile` 已具备路由（`/api/* → backend:8080`，
-  `/* → frontend:3000`），Caddy 原生支持 WebSocket 升级；
-- 生产路径（Caddy 版）：`cloudflared → http://127.0.0.1:80(caddy) → frontend/backend`，
-  caddy 容器需 `extra_hosts` 指向宿主机，或全部容器化后走 compose 内部网络；
-- `docker-compose.yml` 中 caddy 已绑定 80/443，与隧道无冲突（隧道不占入站端口）。
+- 生产构建不带 devProxy，`/api` 反代依赖 `routeRules`（不支持 WS 升级），因此
+  **隧道入口必须经过 Caddy**（见上节）：`cloudflared → http://127.0.0.1:3000(caddy)`
+  → 前端 3001 / 后端 8080；
+- 容器化时：Caddyfile 中上游改为容器名（`backend:8080`、`frontend:3000`），
+  全部服务进 compose 内部网络即可，Caddy 无需绑定宿主端口；
+- `docker-compose.yml` 中 caddy 已预留 80/443 映射，与隧道不冲突
+  （隧道不占入站端口，Cloudflare 边缘直连本机出站链路）。
 
 ## dev 模式经隧道的已知问题
 
