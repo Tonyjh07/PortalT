@@ -213,6 +213,16 @@ func TestVMHandler_UpdateMetadata_InvalidPort(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestVMHandler_UpdateMetadata_EmptyRustdeskID(t *testing.T) {
+	env := setupVMEnv(t)
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata",
+		strings.NewReader(`{"rustdesk.id":"  "}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestVMHandler_MetadataSanitized(t *testing.T) {
 	env := setupVMEnv(t)
 	// 保存含密码的 metadata

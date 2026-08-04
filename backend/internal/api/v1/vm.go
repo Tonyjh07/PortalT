@@ -60,6 +60,10 @@ func validateMetadataPatch(patch map[string]any) error {
 			if strings.TrimSpace(fmtPort(v)) == "" {
 				return errors.New("guac.hostname 不能为空")
 			}
+		case "rustdesk.id":
+			if strings.TrimSpace(fmtPort(v)) == "" {
+				return errors.New("rustdesk.id 不能为空")
+			}
 		}
 	}
 	return nil

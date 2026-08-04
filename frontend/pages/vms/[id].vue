@@ -36,6 +36,51 @@ function onRdState(s: { connecting: boolean; connected: boolean; error: string }
   rdState.connected = s.connected
 }
 
+// RustDesk 一键连接：rustdesk://<id>[@<server>?key=<key>]
+const rdId = computed(() => String(vm.value?.metadata?.['rustdesk.id'] || ''))
+const rdServer = computed(() => String(vm.value?.metadata?.['rustdesk.server'] || ''))
+const rdKey = computed(() => String(vm.value?.metadata?.['rustdesk.key'] || ''))
+
+function rustdeskLink(): string {
+  // id 可能含自定义字符，编码避免破坏 URI 结构（Dart 端会解码 authority）
+  let link = `rustdesk://${encodeURIComponent(rdId.value)}`
+  if (rdServer.value) {
+    link += `@${rdServer.value}`
+    if (rdKey.value) {
+      link += `?key=${encodeURIComponent(rdKey.value)}`
+    }
+  }
+  return link
+}
+
+function openRustDesk() {
+  // 用隐藏 iframe 唤起外部协议：未安装 RustDesk 时页面不会跳转错误页，
+  // SPA 状态与路由保持不变
+  const frame = document.createElement('iframe')
+  frame.style.display = 'none'
+  frame.src = rustdeskLink()
+  document.body.appendChild(frame)
+  window.setTimeout(() => frame.remove(), 500)
+}
+
+async function copyText(text: string) {
+  try {
+    if (navigator.clipboard) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      ta.remove()
+    }
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请手动复制')
+  }
+}
+
 // 扩展信息展示时隐藏敏感键（密码/令牌），仅展示连接参数
 const displayMetadata = computed(() => {
   const md = vm.value?.metadata || {}
@@ -149,6 +194,30 @@ onUnmounted(stopPolling)
                   <el-tag v-if="rdState.connected" type="success" size="small" effect="plain">已连接</el-tag>
                   <el-tag v-else-if="rdState.connecting" type="info" size="small" effect="plain">连接中</el-tag>
                   <el-tag v-else type="warning" size="small" effect="plain">未连接</el-tag>
+                  <el-popover v-if="rdId" placement="bottom-end" :width="300" trigger="click">
+                    <template #reference>
+                      <el-button size="small" plain :title="'RustDesk 一键连接'">
+                        <IconRenderer icon="mdi:monitor" /> RustDesk
+                      </el-button>
+                    </template>
+                    <div class="rustdesk-pop">
+                      <div class="rustdesk-row">
+                        <span>设备 ID</span>
+                        <el-text tag="b">{{ rdId }}</el-text>
+                        <el-button size="small" text type="primary" @click="copyText(rdId)">复制</el-button>
+                      </div>
+                      <div v-if="rdServer" class="rustdesk-row">
+                        <span>服务器</span>
+                        <el-text>{{ rdServer }}</el-text>
+                      </div>
+                      <el-button size="small" type="primary" class="w-full" @click="openRustDesk">
+                        <IconRenderer icon="mdi:monitor" /> 一键连接
+                      </el-button>
+                      <p class="rustdesk-hint">
+                        点击后唤起本机 RustDesk 客户端（需已安装）；连接密码在客户端提示时输入
+                      </p>
+                    </div>
+                  </el-popover>
                   <VmRemoteDesktopConfig
                     :vm="vm"
                     @changed="loadVM"
@@ -270,6 +339,31 @@ onUnmounted(stopPolling)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.rustdesk-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.rustdesk-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rustdesk-row > span:first-child {
+  flex: none;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.rustdesk-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 
 .rd-placeholder p {

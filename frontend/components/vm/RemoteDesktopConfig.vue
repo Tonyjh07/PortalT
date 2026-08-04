@@ -17,6 +17,10 @@ const form = reactive({
   port: '',
   username: '',
   password: '',
+  rdId: '',
+  rdPassword: '',
+  rdServer: '',
+  rdKey: '',
 })
 
 const PROTOCOLS = [
@@ -36,6 +40,11 @@ function open() {
   form.port = String(md['guac.port'] || defaultPort(form.protocol))
   form.username = String(md['guac.username'] || '')
   form.password = String(md['guac.password'] || '')
+  form.rdId = String(md['rustdesk.id'] || '')
+  // 密码经 API 脱敏不回显（只写不回），打开时保持为空
+  form.rdPassword = ''
+  form.rdServer = String(md['rustdesk.server'] || '')
+  form.rdKey = String(md['rustdesk.key'] || '')
   visible.value = true
 }
 
@@ -60,9 +69,13 @@ async function save() {
       'guac.port': form.port.trim() || null,
       'guac.username': form.username.trim() || null,
       'guac.password': form.password || null,
+      'rustdesk.id': form.rdId.trim() || null,
+      'rustdesk.password': form.rdPassword || null,
+      'rustdesk.server': form.rdServer.trim() || null,
+      'rustdesk.key': form.rdKey.trim() || null,
     }
     await api<VM>(`/vms/${props.vm.id}/metadata`, { method: 'PUT', body: patch })
-    ElMessage.success('远程桌面配置已保存')
+    ElMessage.success('远程访问配置已保存')
     visible.value = false
     emit('changed')
   } catch (err) {
@@ -79,14 +92,15 @@ async function save() {
     v-if="can(user, 'vm:manage')"
     size="small"
     plain
-    :title="'配置远程桌面连接参数（协议/目标/凭证）'"
+    :title="'配置远程访问参数（Guacamole / RustDesk）'"
     @click="open"
   >
     <IconRenderer icon="mdi:settings-outline" /> 配置
   </el-button>
 
-  <el-dialog v-model="visible" title="远程桌面配置" width="480px" destroy-on-close>
+  <el-dialog v-model="visible" title="远程访问配置" width="480px" destroy-on-close>
     <el-form label-width="90px" @submit.prevent>
+      <el-divider content-position="left">Guacamole 内嵌远程桌面</el-divider>
       <el-form-item label="协议">
         <el-select v-model="form.protocol" class="w-full" @change="onProtocolChange">
           <el-option v-for="p in PROTOCOLS" :key="p.value" :label="p.label" :value="p.value" />
@@ -103,6 +117,20 @@ async function save() {
       </el-form-item>
       <el-form-item label="密码">
         <el-input v-model="form.password" type="password" show-password placeholder="RDP/VNC 登录密码" autocomplete="new-password" />
+      </el-form-item>
+
+      <el-divider content-position="left">RustDesk 一键连接</el-divider>
+      <el-form-item label="设备 ID">
+        <el-input v-model="form.rdId" placeholder="目标机 RustDesk 客户端显示的 ID" />
+      </el-form-item>
+      <el-form-item label="密码">
+        <el-input v-model="form.rdPassword" type="password" show-password placeholder="连接密码（不回显，留空则客户端输入）" autocomplete="new-password" />
+      </el-form-item>
+      <el-form-item label="服务器">
+        <el-input v-model="form.rdServer" placeholder="自建 hbbs 地址，如 rd.example.org:21116（留空用官方服务器）" />
+      </el-form-item>
+      <el-form-item label="公钥">
+        <el-input v-model="form.rdKey" placeholder="自建服务器公钥（启用强制校验时需要）" />
       </el-form-item>
     </el-form>
     <template #footer>

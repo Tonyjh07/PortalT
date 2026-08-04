@@ -136,6 +136,26 @@ Nuxt `nitro devProxy` 对 WebSocket 升级的转发并不可靠（见 [nuxt/cli#
 3. **隧道（cloudflared）**：入口转发到 Caddy（80）而非直接到 3000，或为
    `/api` 增加独立的 8080 ingress（`wss://域名` 需配 `NUXT_PUBLIC_API_WS_BASE`）。
 
+## RustDesk 一键连接
+
+[RustDesk](https://rustdesk.com/) 作为备选远程方案（内嵌 Guacamole 之外的独立通道），
+PortalT 提供**连接信息展示 + 一键唤起本机客户端**：
+
+- 目标机需安装并运行 RustDesk 客户端（官方服务器或自建 hbbs/hbbr 均可）；
+- 连接参数存于 VM metadata `rustdesk.*` 键：
+
+| 键 | 必填 | 说明 |
+|----|------|------|
+| `rustdesk.id` | 是（有该键才显示入口） | 目标机 RustDesk 设备 ID |
+| `rustdesk.password` | 否 | 连接密码（**只写不回**：API 脱敏，客户端连接时手动输入） |
+| `rustdesk.server` | 否 | 自建服务器地址 `host:port`（如 `rd.example.org:21116`；留空用官方服务器） |
+| `rustdesk.key` | 否 | 自建服务器公钥（启用强制校验时填写） |
+
+- 配置：VM 详情页 → 「远程访问配置」→ RustDesk 区块（仅管理员）；
+- 使用：详情页「远程桌面」卡片右上角 **RustDesk** 按钮 → 显示设备 ID（可复制）
+  与「一键连接」——点击唤起本机 RustDesk 客户端（`rustdesk://<id>[@<server>?key=<key>]`），
+  密码在客户端提示时输入。
+
 ## 常见问题
 
 | 现象 | 原因与处理 |

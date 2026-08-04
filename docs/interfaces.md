@@ -182,11 +182,14 @@ GET /api/v1/guac/ws/:vmId
 | `guac.username` / `guac.password` | 视目标而定 | 登录凭证 |
 | `guac.width` / `guac.height` | 否 | 初始分辨率（默认 1280×800） |
 | `guac.security` / `guac.domain` / `guac.read-only` / `guac.autoretry` / `guac.color-depth` | 否 | 透传协议参数 |
+| `rustdesk.id` | 否 | RustDesk 设备 ID（详情页显示一键连接入口） |
+| `rustdesk.password` | 否 | RustDesk 连接密码（只写不回） |
+| `rustdesk.server` / `rustdesk.key` | 否 | 自建 hbbs 地址 `host:port` / 服务器公钥（留空用官方服务器） |
 
 > 敏感键脱敏：列表/详情/更新接口返回的 VM **不包含**键名匹配
 > `password|passwd|secret|token` 的 metadata（凭证只写不回，仍存于库中供隧道使用）；
 > 更新接口校验受控键：`guac.protocol` 仅限 vnc/rdp/ssh/telnet，`guac.port` 为
-> 1–65535 整数，`guac.hostname` 非空。
+> 1–65535 整数，`guac.hostname` 非空，`rustdesk.id` 非空。
 
 使用与故障排查见 [remote-desktop.md](./remote-desktop.md)。
 
