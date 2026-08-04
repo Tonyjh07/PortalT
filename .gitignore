@@ -20,6 +20,9 @@ frontend/dist/
 *.db-wal
 *.db-shm
 
+# 会话日志（opencode 运行记录）
+log.json
+
 # IDE / 系统
 .idea/
 .vscode/

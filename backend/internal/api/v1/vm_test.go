@@ -192,3 +192,57 @@ func TestVMHandler_UpdateMetadata_NotFound(t *testing.T) {
 	env.router.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
+
+func TestVMHandler_UpdateMetadata_InvalidProtocol(t *testing.T) {
+	env := setupVMEnv(t)
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata",
+		strings.NewReader(`{"guac.protocol":"evil"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestVMHandler_UpdateMetadata_InvalidPort(t *testing.T) {
+	env := setupVMEnv(t)
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata",
+		strings.NewReader(`{"guac.port":70000}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestVMHandler_MetadataSanitized(t *testing.T) {
+	env := setupVMEnv(t)
+	// 保存含密码的 metadata
+	req := httptest.NewRequest(http.MethodPut, "/vms/vm-mock-1/metadata",
+		strings.NewReader(`{"guac.protocol":"rdp","guac.password":"s3cret","guac.hostname":"10.0.0.9"}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	md := vmBody(t, w)["data"].(map[string]any)["metadata"].(map[string]any)
+	assert.NotContains(t, md, "guac.password") // 响应脱敏，密码只写不回
+	assert.Equal(t, "rdp", md["guac.protocol"])
+
+	// 仓储中仍保留完整数据（远程桌面连接仍需密码）
+	stored, err := env.repo.FindByID("vm-mock-1")
+	require.NoError(t, err)
+	assert.Equal(t, "s3cret", stored.Metadata["guac.password"])
+
+	// 详情接口同样脱敏
+	w = vmRequest(env.router, http.MethodGet, "/vms/vm-mock-1")
+	require.Equal(t, http.StatusOK, w.Code)
+	md = vmBody(t, w)["data"].(map[string]any)["metadata"].(map[string]any)
+	assert.NotContains(t, md, "guac.password")
+
+	// 列表接口同样脱敏
+	w = vmRequest(env.router, http.MethodGet, "/vms")
+	require.Equal(t, http.StatusOK, w.Code)
+	for _, item := range vmBody(t, w)["data"].([]any) {
+		if vm := item.(map[string]any); vm["id"] == "vm-mock-1" {
+			assert.NotContains(t, vm["metadata"].(map[string]any), "guac.password")
+		}
+	}
+}

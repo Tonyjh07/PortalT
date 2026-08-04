@@ -6,6 +6,7 @@ package services
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"portalt/internal/domain"
@@ -150,9 +151,16 @@ func (s *VMService) GetVMStatus(ctx context.Context, id string) (*domain.VM, err
 	if err == nil {
 		for _, vm := range live {
 			if vm != nil && vm.ID == id {
-				// 回刷时同样合并 metadata，避免手动配置（guac.* 等）被覆盖
-				if prev, err := s.repo.FindByID(id); err == nil {
+				// 回刷时同样合并 metadata，避免手动配置（guac.* 等）被覆盖；
+				// 仓储查询失败时向上返回，避免静默用 live 数据冲掉手动配置
+				prev, perr := s.repo.FindByID(id)
+				switch {
+				case perr == nil && prev != nil:
 					vm.Metadata = mergeMetadata(prev.Metadata, vm.Metadata)
+				case errors.Is(perr, ports.ErrNotFound):
+					// 库中尚无记录（理论上 SyncVMs 已保存过），直接以 live 为准
+				case perr != nil:
+					return nil, fmt.Errorf("find existing vm %q: %w", id, perr)
 				}
 				if err := s.repo.Save(vm); err != nil {
 					return nil, fmt.Errorf("refresh vm %q: %w", id, err)

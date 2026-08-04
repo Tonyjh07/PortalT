@@ -183,6 +183,11 @@ GET /api/v1/guac/ws/:vmId
 | `guac.width` / `guac.height` | 否 | 初始分辨率（默认 1280×800） |
 | `guac.security` / `guac.domain` / `guac.read-only` / `guac.autoretry` / `guac.color-depth` | 否 | 透传协议参数 |
 
+> 敏感键脱敏：列表/详情/更新接口返回的 VM **不包含**键名匹配
+> `password|passwd|secret|token` 的 metadata（凭证只写不回，仍存于库中供隧道使用）；
+> 更新接口校验受控键：`guac.protocol` 仅限 vnc/rdp/ssh/telnet，`guac.port` 为
+> 1–65535 整数，`guac.hostname` 非空。
+
 使用与故障排查见 [remote-desktop.md](./remote-desktop.md)。
 
 ### RBAC 中间件（internal/api/middleware/rbac.go）

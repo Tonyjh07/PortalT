@@ -54,7 +54,7 @@ guacd :4822
 配置方式（二选一）：
 
 1. **前端配置面板（推荐）**：VM 详情页 → 「远程桌面」卡片右上角「配置」按钮（仅管理员）→ 填写协议/目标/端口/用户名/密码 → 保存（写入 metadata，密码为空则清除该键）。
-2. **API**：`PUT /api/v1/vms/:id/metadata`（需 `vm:manage` 权限，body 为键值对象，值为 `null` 的键删除）。示例：
+2. **API**：`PUT /api/v1/vms/:id/metadata`（需 `vm:manage` 权限，body 为键值对象，值为 `null` 的键删除；校验：`guac.protocol` 仅限 vnc/rdp/ssh/telnet、`guac.port` 为 1–65535、`guac.hostname` 非空）。示例：
 
 ```json
 {
@@ -66,6 +66,7 @@ guacd :4822
 ```
 
 > 注意：`SyncVMs`/状态轮询采用 metadata 合并策略——提供者未提供的键保留库内值，手动配置不会被平台同步覆盖（workstation 适配器 IP 走 `ip_address` 字段，不写 metadata）。
+> 安全：API 返回的 VM **不含**键名匹配 `password|passwd|secret|token` 的 metadata（凭证只写不回，仍存于库中供隧道使用）。
 
 ## 使用步骤
 
@@ -117,6 +118,23 @@ Nuxt `nitro devProxy` 对 WebSocket 升级的转发并不可靠（见 [nuxt/cli#
 - 复用 `nitro.devProxy` 中 `ws: true` 的规则，在 dev 父进程拦截 `upgrade` 事件；
 - 用 `httpxy` 直连后端（仅取 target 的 origin，保留原始路径，避免双重前缀）；
 - 仅 dev 生效（`nuxt.options.dev` 判断），生产构建不受影响。
+
+## 生产部署（WebSocket 路径）
+
+生产环境（`node .output/server/index.mjs`）**不含** wsProxy，远程桌面 WS 走同源
+`/api/v1/guac/ws/:vmId`（`runtimeConfig.public.apiWsBase` 留空时，见
+`frontend/components/vm/RemoteDesktop.vue`），因此**必须由反向代理支持 WS 升级**：
+
+1. **推荐：Caddy**（仓库 `caddy/Caddyfile` 已内置）：
+   - `/api/*` → `backend:8080`（Caddy 原生透传 WS upgrade）；
+   - `/*` → `frontend:3000`（preview 或容器）；
+   - 浏览器连 `wss://域名/api/v1/guac/ws/...`，全程同源，无需额外配置。
+2. **不推荐：nuxt preview 单进程直连隧道**（`routeRules` 反代）：
+   - nitro 的 `routeRules.proxy` **不支持 WebSocket 升级**（返回 400），远程桌面不可用；
+   - 仅当本地 HTTP 调试时可设 `NUXT_PUBLIC_API_WS_BASE=http://127.0.0.1:8080`
+     直连后端（浏览器限制：HTTPS 页面不能连 `ws://` 明文地址）。
+3. **隧道（cloudflared）**：入口转发到 Caddy（80）而非直接到 3000，或为
+   `/api` 增加独立的 8080 ingress（`wss://域名` 需配 `NUXT_PUBLIC_API_WS_BASE`）。
 
 ## 常见问题
 

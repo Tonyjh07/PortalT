@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"portalt/internal/domain"
@@ -79,19 +80,36 @@ func NewProvider(cfg Config) *Provider {
 }
 
 // ListVMs 返回 Workstation 中注册的全部虚拟机。
-// vmrest 列表接口仅返回 id 与 vmx 路径，CPU/内存/状态等需逐个查询详情。
+// vmrest 列表接口仅返回 id 与 vmx 路径，CPU/内存/状态等需逐个查询详情；
+// 各虚拟机详情并行查询（含 /power、/ip 子接口），单台失败则整体失败。
 func (p *Provider) ListVMs() ([]*domain.VM, error) {
 	entries, err := p.listEntries()
 	if err != nil {
 		return nil, err
 	}
-	vms := make([]*domain.VM, 0, len(entries))
-	for _, e := range entries {
-		vm, err := p.vmDetail(e)
-		if err != nil {
-			return nil, err
-		}
-		vms = append(vms, vm)
+	vms := make([]*domain.VM, len(entries))
+	errCh := make(chan error, 1)
+	var wg sync.WaitGroup
+	for i, e := range entries {
+		wg.Add(1)
+		go func(i int, e listEntry) {
+			defer wg.Done()
+			vm, err := p.vmDetail(e)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+				return
+			}
+			vms[i] = vm
+		}(i, e)
+	}
+	wg.Wait()
+	select {
+	case err := <-errCh:
+		return nil, err
+	default:
 	}
 	return vms, nil
 }
