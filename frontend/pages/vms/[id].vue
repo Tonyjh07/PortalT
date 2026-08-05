@@ -56,11 +56,27 @@ function rustdeskLink(): string {
 function openRustDesk() {
   // 用隐藏 iframe 唤起外部协议：未安装 RustDesk 时页面不会跳转错误页，
   // SPA 状态与路由保持不变
+  let invoked = false
+  const markInvoked = () => {
+    invoked = true
+  }
+  // 唤起本机客户端时窗口会失焦；以此尽力检测是否安装（各浏览器行为有差异）
+  window.addEventListener('blur', markInvoked)
   const frame = document.createElement('iframe')
   frame.style.display = 'none'
   frame.src = rustdeskLink()
   document.body.appendChild(frame)
-  window.setTimeout(() => frame.remove(), 500)
+  window.setTimeout(() => frame.remove(), 2000)
+  window.setTimeout(() => {
+    window.removeEventListener('blur', markInvoked)
+    if (!invoked) {
+      ElMessage({
+        message: '未能唤起 RustDesk，请确认本机已安装客户端（可在 rustdesk.com 下载）；若客户端已打开可忽略此提示',
+        type: 'warning',
+        duration: 6000,
+      })
+    }
+  }, 1500)
 }
 
 async function copyText(text: string) {
@@ -210,11 +226,23 @@ onUnmounted(stopPolling)
                         <span>服务器</span>
                         <el-text>{{ rdServer }}</el-text>
                       </div>
-                      <el-button size="small" type="primary" class="w-full" @click="openRustDesk">
-                        <IconRenderer icon="mdi:monitor" /> 一键连接
-                      </el-button>
+                      <div class="rustdesk-actions">
+                        <el-button size="small" type="primary" @click="openRustDesk">
+                          <IconRenderer icon="mdi:monitor" /> 一键连接
+                        </el-button>
+                        <el-button
+                          size="small"
+                          tag="a"
+                          href="https://rustdesk.com/"
+                          target="_blank"
+                          rel="noopener"
+                        >
+                          下载客户端
+                        </el-button>
+                      </div>
                       <p class="rustdesk-hint">
-                        点击后唤起本机 RustDesk 客户端（需已安装）；连接密码在客户端提示时输入
+                        连接密码在客户端提示时输入；本机需已安装 RustDesk，
+                        目标机需安装并运行 RustDesk 客户端（ID 在其界面左上角查看）
                       </p>
                     </div>
                   </el-popover>
@@ -347,6 +375,12 @@ onUnmounted(stopPolling)
   gap: 8px;
 }
 
+.rustdesk-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .rustdesk-row {
   display: flex;
   align-items: center;
@@ -364,6 +398,37 @@ onUnmounted(stopPolling)
   font-size: 12px;
   line-height: 1.5;
   color: var(--el-text-color-secondary);
+}
+
+@media (max-width: 767px) {
+  .detail-header {
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: flex-start;
+  }
+
+  .detail-title {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .detail-title .page-title {
+    overflow-wrap: anywhere;
+  }
+
+  .card-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .rd-actions {
+    flex-wrap: wrap;
+  }
+
+  .rd-conn-info {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
 }
 
 .rd-placeholder p {

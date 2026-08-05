@@ -17,6 +17,8 @@
   justify-content: center;
   height: 100%;
   gap: 8px;
+  padding: 24px 16px;
+  box-sizing: border-box;
 }
 
 .auth-brand {

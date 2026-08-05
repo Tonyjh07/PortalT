@@ -121,10 +121,14 @@ async function save() {
 
       <el-divider content-position="left">RustDesk 一键连接</el-divider>
       <el-form-item label="设备 ID">
-        <el-input v-model="form.rdId" placeholder="目标机 RustDesk 客户端显示的 ID" />
+        <el-input v-model="form.rdId" placeholder="目标机 RustDesk 客户端左上角显示的数字 ID" />
+        <div class="rd-form-tip">
+          在目标机安装并运行 RustDesk 客户端后，左上角即显示设备 ID（自建服务器配置见客户端「设置 → 网络」）
+        </div>
       </el-form-item>
       <el-form-item label="密码">
         <el-input v-model="form.rdPassword" type="password" show-password placeholder="连接密码（不回显，留空则客户端输入）" autocomplete="new-password" />
+        <div class="rd-form-tip">目标机客户端「安全 → 密码」中设置（可设永久密码）；仅存档供参考，PortalT 不直接使用</div>
       </el-form-item>
       <el-form-item label="服务器">
         <el-input v-model="form.rdServer" placeholder="自建 hbbs 地址，如 rd.example.org:21116（留空用官方服务器）" />
@@ -139,3 +143,13 @@ async function save() {
     </template>
   </el-dialog>
 </template>
+
+<style scoped>
+.rd-form-tip {
+  width: 100%;
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
+}
+</style>

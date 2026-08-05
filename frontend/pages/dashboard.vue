@@ -9,6 +9,7 @@ const { load, items } = useMenu()
 const vms = ref<VM[]>([])
 const loading = ref(false)
 const quickLinks = ref<Plugin[]>([])
+const { isMobile } = useIsMobile()
 
 const totalCpu = computed(() => vms.value.reduce((sum, vm) => sum + vm.cpu, 0))
 const totalMemory = computed(() => vms.value.reduce((sum, vm) => sum + vm.memory_mb, 0))
@@ -82,8 +83,8 @@ onMounted(async () => {
                 <VMStatusTag :status="row.status" />
               </template>
             </el-table-column>
-            <el-table-column prop="ip_address" label="IP 地址" min-width="130" />
-            <el-table-column label="内存" width="100">
+            <el-table-column v-if="!isMobile" prop="ip_address" label="IP 地址" min-width="130" />
+            <el-table-column v-if="!isMobile" label="内存" width="100">
               <template #default="{ row }">{{ fmtMemory(row.memory_mb) }}</template>
             </el-table-column>
           </el-table>

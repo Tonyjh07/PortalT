@@ -62,11 +62,12 @@ async function handleSubmit() {
 
 <style scoped>
 .login-card {
-  width: 360px;
+  width: min(360px, calc(100vw - 32px));
   padding: 32px;
   border-radius: 8px;
   background-color: var(--el-bg-color);
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  box-sizing: border-box;
 }
 
 .login-title {
@@ -76,5 +77,11 @@ async function handleSubmit() {
 
 .login-btn {
   width: 100%;
+}
+
+@media (max-width: 767px) {
+  .login-card {
+    padding: 24px 20px;
+  }
 }
 </style>

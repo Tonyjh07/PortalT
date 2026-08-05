@@ -29,6 +29,16 @@ body {
   padding: 20px 24px;
 }
 
+@media (max-width: 767px) {
+  .page-container {
+    padding: 12px;
+  }
+
+  .page-pad {
+    padding: 12px;
+  }
+}
+
 .page-head {
   display: flex;
   align-items: center;

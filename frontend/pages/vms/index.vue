@@ -8,6 +8,7 @@ const { api } = useApi()
 
 const vms = ref<VM[]>([])
 const loading = ref(false)
+const { isMobile } = useIsMobile()
 
 async function loadVMs() {
   loading.value = true
@@ -37,7 +38,7 @@ onMounted(loadVMs)
       </el-button>
     </div>
 
-    <el-card shadow="never" v-loading="loading">
+    <el-card v-if="!isMobile" shadow="never" v-loading="loading">
       <el-table
         :data="vms"
         @row-click="(row: VM) => navigateTo(`/vms/${row.id}`)"
@@ -75,6 +76,28 @@ onMounted(loadVMs)
       </el-table>
       <el-empty v-if="!loading && !vms.length" description="暂无虚拟机" />
     </el-card>
+
+    <div v-else class="vm-cards" v-loading="loading">
+      <div v-for="vm in vms" :key="vm.id" class="vm-card" @click="navigateTo(`/vms/${vm.id}`)">
+        <div class="vm-card-head">
+          <div class="vm-card-name">
+            <IconRenderer :icon="'mdi:server'" :size="18" color="var(--el-color-primary)" />
+            <span class="vm-card-title">{{ vm.name }}</span>
+          </div>
+          <VMStatusTag :status="vm.status" />
+        </div>
+        <div class="vm-card-meta">
+          <span>CPU {{ vm.cpu }} 核 · 内存 {{ fmtMemory(vm.memory_mb) }}</span>
+          <span v-if="vm.ip_address">{{ vm.ip_address }}</span>
+          <el-text v-else type="info">-</el-text>
+          <span>{{ vm.host || '-' }}</span>
+        </div>
+        <div class="vm-card-actions" @click.stop>
+          <VmPowerActions :vm="vm" @changed="loadVMs" />
+        </div>
+      </div>
+      <el-empty v-if="!loading && !vms.length" description="暂无虚拟机" />
+    </div>
   </div>
 </template>
 
@@ -87,5 +110,62 @@ onMounted(loadVMs)
 
 .vm-table {
   cursor: pointer;
+}
+
+.vm-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.vm-card {
+  padding: 14px 16px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background-color: var(--el-bg-color);
+  cursor: pointer;
+  transition: border-color 0.2s;
+}
+
+.vm-card:active {
+  border-color: var(--el-color-primary);
+}
+
+.vm-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.vm-card-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.vm-card-title {
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vm-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.vm-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 </style>
