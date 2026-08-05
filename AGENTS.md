@@ -45,3 +45,4 @@ PortalT：HomeLab 统一门户（Go 后端 + Nuxt 3 前端）。详见 `About.md
 - 代码注释、错误消息、commit 均为中文；commit 用 Conventional Commits 风格（如 `fix(frontend): ...`、`Phase N: ...`），直接在 main 分支工作，提交须用户明确要求。
 - 文档约定（`docs/README.md`）：只记录已实现内容，Phase 完成或接口变更必须同步更新文档与索引表；`About.md` 进度表同步打勾。
 - 测试用 testify（assert/require）；后端 `go test ./... -count=1` 全绿是提交/交付的前提。
+- **提交/交付前必须调用 subagent 审查代码**：先用 `general` subagent 对未提交改动做静态 review（安全问题、正确性、与仓库约定一致性），无阻断问题方可提交；阻断/重要建议先修复再提交。
