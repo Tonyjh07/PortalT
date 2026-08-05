@@ -10,9 +10,9 @@
 浏览器 ──https──> Cloudflare 边缘 ──隧道(出站)──> cloudflared(本机)
                                                      │
                                                      ▼
-                                        Caddy :3000  (本地反代，原生支持 WS 升级)
-                                        ├── /api/*、/native/* → 127.0.0.1:8080 (后端)
-                                        └── 其余(页面/静态资源) → 127.0.0.1:3001 (Nuxt preview)
+                                         Caddy :8808  (本地反代，原生支持 WS 升级)
+                                         ├── /api/*、/native/*、/healthz → 127.0.0.1:8080 (后端)
+                                         └── 其余(页面/静态资源) → 127.0.0.1:3001 (Nuxt preview)
                                                      │  guacd 指令流
                                                      ▼
                                          guacd :4822 → VNC/RDP 目标机
@@ -42,7 +42,7 @@ tunnel: <TUNNEL_ID>                      # cloudflared tunnel list 查看
 credentials-file: C:\Users\<你>\.cloudflared\<TUNNEL_ID>.json
 ingress:
   - hostname: demo.tonyjh07.dpdns.org    # 换成你的域名
-    service: http://127.0.0.1:3000       # Nuxt dev / 生产前端
+    service: http://127.0.0.1:8808       # Caddy 入口（端口与 Caddy 监听一致，见下节）
   - service: http_status:404             # 兜底
 ```
 
@@ -55,7 +55,7 @@ cloudflared tunnel run portalt           # 前台运行（生产可用 NSSM/服�
 
 > 本机隧道实际为 **Zero Trust token 模式**（服务运行参数
 > `cloudflared tunnel run --token-file <token>`），入口规则在 Cloudflare 控制台
-> （Zero Trust → Networks → Tunnels）配置，全部流量指向 `http://127.0.0.1:3000`。
+> （Zero Trust → Networks → Tunnels）配置，全部流量指向 `http://127.0.0.1:8808`。
 
 ## 四、本地服务要求（关键点）
 
@@ -73,24 +73,21 @@ cloudflared tunnel run portalt           # 前台运行（生产可用 NSSM/服�
    },
    ```
 
-3. 后端 `:8080`、guacd `:4822` 均在 cloudflared 所在宿主机，无需对外暴露；
-4. **Caddy 监听 3000**（隧道入口），把 `/api/*`、`/native/*` 转发到后端 8080，
-   其余转发到 Nuxt preview（生产构建监听 3001），Caddyfile 见下节。
+3. 后端 `127.0.0.1:8080`（`PORT` 可覆盖）、guacd `127.0.0.1:4822` 均在
+   cloudflared 所在宿主机，**只绑 127.0.0.1，对外不可达**；
+4. **Caddy 监听 8808**（隧道/局域网入口，端口可配置，见下节），把 `/api/*`、
+   `/native/*`、`/healthz` 转发到后端 8080，其余转发到 Nuxt preview
+   （生产构建监听 3001），Caddyfile 见下节。
 
-## 四·五、Caddy 反代（推荐，生产入口）
+## 四·五、Caddy 反代（生产入口）
 
 ```text
-# Caddyfile（监听 3000 作为隧道入口；Caddy 原生支持 WebSocket 升级）
-:3000 {
-	handle /api/* {
-		reverse_proxy 127.0.0.1:8080
-	}
-	handle /native/* {
-		reverse_proxy 127.0.0.1:8080
-	}
-	handle {
-		reverse_proxy 127.0.0.1:3001
-	}
+# caddy/Caddyfile（入口端口由 CADDY_PORT 控制，默认 8808）
+:{$CADDY_PORT:8808} {
+	handle /api/*    { reverse_proxy 127.0.0.1:8080 }
+	handle /native/* { reverse_proxy 127.0.0.1:8080 }
+	handle /healthz  { reverse_proxy 127.0.0.1:8080 }
+	handle           { reverse_proxy 127.0.0.1:3001 }
 }
 ```
 
@@ -106,16 +103,28 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
 >   用 `PORT=3001` 或 nitro 配置覆盖）；`NUXT_PUBLIC_API_WS_BASE` **留空**
 >   （同源 `wss://<域名>/api/...` 走隧道 → Caddy → 后端）；
 > - 验证命令（本机模拟隧道）：
->   - 页面：`Invoke-WebRequest http://127.0.0.1:3000/`（200）
->   - WS：`ws://127.0.0.1:3000/api/v1/guac/ws/<vmId>?token=<token>`（应 OPENED 并收到渲染指令）
+>   - 页面：`Invoke-WebRequest http://127.0.0.1:8808/`（200）
+>   - WS：`ws://127.0.0.1:8808/api/v1/guac/ws/<vmId>?token=<token>`（应 OPENED 并收到渲染指令）
+
+### Caddy 入口端口配置
+
+- **默认 8808**：避开 80/443/8080/3000 等易被封禁、易被扫描的常见端口；
+  同时绑定全部接口（v4+v6），局域网与公网 v6 直连、cloudflared 隧道回连均走此端口；
+- 修改端口二选一（改后**必须同步** `~/.cloudflared/config.yml` 或 Cloudflare
+  控制台的 ingress 指向）：
+  1. 环境变量注入（不改文件）：`$env:CADDY_PORT = "xxxx"; caddy run ...`，
+     Caddyfile 的 `{$CADDY_PORT:8808}` 自动读取；
+  2. 直接编辑 `caddy/Caddyfile` 顶级监听端口；
+- 未安装 RustDesk 客户端不影响；启用 HTTPS 域名（80/443）见 Caddyfile 尾部
+  注释示例（需域名 DNS 可解析，Caddy 自动签发证书）。
 
 ## 五、验证
 
 ```powershell
 # 1) 页面与 API（带上隧道域名 Host 模拟 cloudflared 转发）
-curl -H "Host: demo.tonyjh07.dpdns.org" http://127.0.0.1:3000/
+curl -H "Host: demo.tonyjh07.dpdns.org" http://127.0.0.1:8808/
 curl -X POST -H "Host: demo.tonyjh07.dpdns.org" -H "Content-Type: application/json" `
-  -d '{"username":"admin","password":"admin123"}' http://127.0.0.1:3000/api/v1/auth/login
+  -d '{"username":"admin","password":"admin123"}' http://127.0.0.1:8808/api/v1/auth/login
 
 # 2) WebSocket 隧道（外部 Origin + 隧道 Host）
 node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连接保持活跃
@@ -133,15 +142,34 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 | 远程桌面握手失败 | guacd 未启动 / `GUACD_URL` 错误 / 目标机不可达；另注意演示容器
   `host.docker.internal` 仅对同宿主机目标有效，外部 VM 需在 metadata 配可达的 `guac.hostname` |
 
+## 生产端口分配
+
+混合部署（推荐）：本机运行 Caddy/后端/前端 preview，**Caddy 是唯一对外出口**，
+其余服务只绑 127.0.0.1（仅 Caddy 所在宿主机可达）。
+
+| 端口 | 服务 | 绑定 | 说明 |
+|------|------|------|------|
+| **8808** | Caddy 入口 | 全部接口（v4+v6） | 隧道/LAN/v6 统一入口；`CADDY_PORT` 可改 |
+| 80/443 | Caddy HTTPS（可选） | 全部接口 | 域名 TLS 就绪后启用，见 `caddy/Caddyfile` 注释 |
+| 3001 | 前端 preview | 127.0.0.1 | `PORT=3001`（`node .output/server/index.mjs`） |
+| 8080  | 后端 | 127.0.0.1 | `PORT` 可覆盖（默认 `127.0.0.1:8080`） |
+| 4822  | guacd | 127.0.0.1 | compose 已收紧；后端经此连 guacd |
+| 5432  | postgres | 127.0.0.1 | compose 已收紧；仅宿主机/后端用 |
+| 5900  | vnc-demo | 127.0.0.1 | 演示容器；生产指向真实 VM 后移除 |
+| 3000 | dev server | 127.0.0.1 | 仅开发；生产不占用（Caddy 与他端口错开） |
+
 ## 生产部署说明
 
 - 生产构建不带 devProxy，`/api` 反代依赖 `routeRules`（不支持 WS 升级），因此
-  **隧道入口必须经过 Caddy**（见上节）：`cloudflared → http://127.0.0.1:3000(caddy)`
-  → 前端 3001 / 后端 8080；
-- 容器化时：Caddyfile 中上游改为容器名（`backend:8080`、`frontend:3000`），
-  全部服务进 compose 内部网络即可，Caddy 无需绑定宿主端口；
-- `docker-compose.yml` 中 caddy 已预留 80/443 映射，与隧道不冲突
-  （隧道不占入站端口，Cloudflare 边缘直连本机出站链路）。
+  **入口必须经过 Caddy**（见上节）：
+  `cloudflared → http://127.0.0.1:{CADDY_PORT} → Caddy → 前端 3001 / 后端 8080`；
+- `docker-compose.yml` 仅提供数据库与远程桌面演示容器（postgres/guacd/vnc-demo），
+  端口一律收紧到 127.0.0.1，不参与对外暴露；后端/前端/Caddy 在宿主机以
+  二进制运行（或按需再容器化并接入同一内部网络）；
+- RustDesk 为一键唤起本机客户端（`rustdesk://`），不部署 hbbs/hbbr 服务器，
+  无需额外对外开放端口；
+- **对外暴露前务必**：修改默认管理员密码（`admin/admin123`，见
+  `ADMIN_PASSWORD`）、配置强 `JWT_SECRET`，并确认 Caddy 仅暴露在可信网络/隧道内。
 
 ## dev 模式经隧道的已知问题
 
@@ -152,4 +180,5 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
      `docs/conventions.md`「Nuxt dev 的全局 CSS 加载 bug」），已用 patch-package 修补；
   3. **切换 dev ↔ preview 后**：浏览器缓存了旧 HTML，需**硬刷新（Ctrl+Shift+R）**，
      否则会请求已不存在的 `/_nuxt/@vite/client`、`/_nuxt/C:/...` 等 dev 资源（404）。
-- 对外验证请用生产产物：`npm run build && node .output/server/index.mjs`（监听 3000）。
+- 对外验证请用生产产物：`npm run build && node .output/server/index.mjs`
+  （监听 3001，`PORT=3001` 覆盖，避开 dev 的 3000）。

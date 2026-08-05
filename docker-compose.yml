@@ -1,5 +1,7 @@
-# PortalT docker-compose.yml (Phase 0: PostgreSQL + Caddy)
-# Phase 8: + guacd（Guacamole 协议守护进程）与 VNC 演示目标
+# PortalT docker-compose.yml (Phase 0: PostgreSQL + guacd + VNC 演示)
+# 混合部署：本机运行后端(8080)/前端 preview(3001)/Caddy(8808)，
+# 本文件仅提供数据库与远程桌面演示容器。端口一律只绑 127.0.0.1
+# （仅 Caddy 所在的宿主机可访问），对外入口只有 Caddy，见 caddy/Caddyfile。
 
 name: portalt
 
@@ -13,7 +15,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-securepassword}
       POSTGRES_DB: ${DB_NAME:-portalt}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -24,19 +26,21 @@ services:
 
   # Guacamole 协议守护进程（Phase 8）：接收 PortalT 隧道的原生指令，
   # 解析 VNC/RDP 协议渲染桌面。浏览器不直接接触 guacd，
-  # 仅经 PortalT 后端（GUACD_URL=guacd:4822）接入。
+  # 仅经 PortalT 后端（GUACD_URL=127.0.0.1:4822）接入。
   guacd:
     image: guacamole/guacd:1.5.5
     container_name: portalt-guacd
     restart: unless-stopped
     ports:
-      - "4822:4822"
+      - "127.0.0.1:4822:4822"
     extra_hosts:
       # guacd 经宿主机访问演示 VNC 目标（Linux 需显式网关；Docker Desktop 自带）
       - "host.docker.internal:host-gateway"
 
   # VNC 演示目标（Phase 8）：mock 虚拟机 metadata 指向本容器（5900）。
-  # 生产环境请替换为真实虚拟机并更新 VM metadata 连接参数。
+  # 生产环境请替换为真实虚拟机并更新 VM metadata 连接参数；此时可移除本服务。
+  # 注意：Linux 原生 Docker（非 Docker Desktop）下 guacd 经 host-gateway
+  # 连不上仅绑 127.0.0.1 的演示目标，需放开端口或改用 compose 服务名直连。
   vnc-demo:
     image: dorowu/ubuntu-desktop-lxde-vnc
     container_name: portalt-vnc-demo
@@ -45,24 +49,7 @@ services:
       VNC_PASSWORD: portalt-demo
       VNC_RESOLUTION: 1280x800
     ports:
-      - "5900:5900"
-
-  caddy:
-    image: caddy:2
-    container_name: portalt-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      postgres:
-        condition: service_healthy
+      - "127.0.0.1:5900:5900"
 
 volumes:
   pgdata:
-  caddy_data:
-  caddy_config:

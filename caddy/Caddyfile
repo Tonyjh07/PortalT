@@ -1,8 +1,32 @@
-# PortalT Caddy 配置
-# Phase 10 将启用域名与 HTTPS；当前按 Docker Compose 内部主机名反代
+# PortalT Caddy 配置（混合部署：本机 caddy 作为唯一对外入口）
+# 监听端口由 CADDY_PORT 环境变量控制（默认 8808，避开易封/易扫端口）。
+# 改端口两种方式：
+#   1) 环境变量：caddy run 时注入 CADDY_PORT=xxxx（无需改本文件）
+#   2) 直接编辑下方顶级监听端口
+# 详见 docs/external-access.md「生产部署」与「Caddy 入口端口配置」。
 
-:80 {
-	reverse_proxy /api/* backend:8080
-	reverse_proxy /healthz backend:8080
-	reverse_proxy /* frontend:3000
+:{$CADDY_PORT:8808} {
+	handle /api/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /native/* {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle /healthz {
+		reverse_proxy 127.0.0.1:8080
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3001
+	}
 }
+
+# 可选：域名与 HTTPS（自动 TLS），启用后 443/80 入口。
+# demo.tonyjh07.dpdns.org {
+# 	tls {
+# 		dns cloudflare {env.CF_API_TOKEN}
+# 	}
+# 	handle /api/*    { reverse_proxy 127.0.0.1:8080 }
+# 	handle /native/* { reverse_proxy 127.0.0.1:8080 }
+# 	handle /healthz  { reverse_proxy 127.0.0.1:8080 }
+# 	handle           { reverse_proxy 127.0.0.1:3001 }
+# }

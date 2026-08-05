@@ -37,12 +37,15 @@ func builtinPlugins() []plugins.Plugin {
 const (
 	// AppVersion 当前版本号
 	AppVersion = "v0.1"
-	// listenAddr HTTP 监听地址
-	listenAddr = ":8080"
 )
 
 func main() {
 	log.Println("PortalT", AppVersion, "starting...")
+
+	// HTTP 监听地址：PORT 可覆盖（如 "127.0.0.1:8080"、"0.0.0.0:8080"）；
+	// 若只给裸端口（如 "8080"），自动绑定回环地址，避免与前端 preview
+	// 的 PORT=3001 用法混淆导致启动失败
+	listenAddr := normalizeAddr(envOr("PORT", "127.0.0.1:8080"))
 
 	ctx := context.Background()
 
@@ -149,6 +152,14 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// normalizeAddr 若地址不含 ":"（视为裸端口）则补全为 "127.0.0.1:<port>"。
+func normalizeAddr(addr string) string {
+	if !strings.Contains(addr, ":") {
+		return "127.0.0.1:" + addr
+	}
+	return addr
 }
 
 // deriveWebURL 从虚拟化平台 SDK 地址推导其 Web 管理界面地址
