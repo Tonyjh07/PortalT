@@ -4,7 +4,7 @@ import type { Role, User } from '~/types'
 // 仅作为后端权限集合（/auth/me 的 permissions）未加载时的兜底；
 // 运行时一律以用户权限集合为单一事实来源。
 const ROLE_PERMS: Record<string, string[]> = {
-  admin: ['vm:view', 'vm:start', 'vm:stop', 'vm:restart', 'vm:manage', 'vm:console', 'plugin:view', 'plugin:manage', 'user:manage'],
+  admin: ['vm:view', 'vm:start', 'vm:stop', 'vm:restart', 'vm:manage', 'vm:console', 'plugin:view', 'plugin:manage', 'user:manage', 'esxi-admin:use'],
   user: ['vm:view', 'vm:start', 'vm:stop', 'vm:restart', 'vm:console', 'plugin:view'],
   viewer: ['vm:view'],
 }

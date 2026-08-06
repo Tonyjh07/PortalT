@@ -129,14 +129,16 @@ GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
   不存在或已停用 → 404）
 - **权限声明**：插件 `Info()` 的 `Permission` 为最小访问权限——`nativeGate` 强制校验
   （用户权限集合/角色矩阵不具备 → 403），同时作为启动同步的默认值（plugins 表记录权限为空时
-  才回填，管理员配置不覆盖）；声明值须在权限字典内（管理 API 层校验，见插件管理一节）
+  才回填，管理员配置不覆盖）；声明值须在权限字典内（管理 API 层校验，见插件管理一节）。
+  注意菜单/代理入口组级仍要求通用 `plugin:view`（`/menu`、`/plugins/native`），
+  声明专属权限（如 `esxi-admin:use`）的插件需用户同时持有二者，默认 admin 双持有
 - 静态前端：`/native/:pluginId/`（公开托管内嵌页，数据访问一律走鉴权 API；前端 iframe 用
   `/native/<id>/` 嵌入）
 - 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `Provider`（平台类型）与
   `WebURL`（平台 Web 界面地址，如 ESXi 的 `https://host/ui/`）
 - 完整开发规范见 [plugins.md](./plugins.md)
 - 示例插件：`esxi-admin`（iframe 嵌入 ESXi Web 管理界面，`internal/plugins/examples/esxiadmin`，
-  声明 `plugin:view`）、`cron`（内存定时任务，`internal/plugins/examples/cron`，声明 `plugin:manage`）
+  声明专属权限 `esxi-admin:use`）、`cron`（内存定时任务，`internal/plugins/examples/cron`，声明 `plugin:manage`）
 
 ### 用户管理（需认证 + `user:manage`，管理员）
 
@@ -155,7 +157,7 @@ PUT    /api/v1/users/:id/vm-access  → 全量替换用户授权（{vm_ids:[...]
 
 ```
 GET    /api/v1/roles           → 全部角色（内置 admin/user/viewer + 自定义）
-GET    /api/v1/roles/permissions → 权限字典（10 项，中文描述）
+GET    /api/v1/roles/permissions → 权限字典（11 项，中文描述）
 POST   /api/v1/roles           → 创建自定义角色（id/name 必填；id 仅小写字母/数字/下划线/连字符 1-32 位）
 PUT    /api/v1/roles/:id       → 更新角色权限集合（内置角色可改）
 DELETE /api/v1/roles/:id       → 删除角色（内置角色不可删）
@@ -452,6 +454,7 @@ type PluginRepository interface {
 | PERM_PLUGIN_VIEW | plugin:view | 查看插件 |
 | PERM_PLUGIN_MANAGE | plugin:manage | 管理插件 |
 | PERM_USER_MANAGE | user:manage | 管理用户 |
+| PERM_ESXI_ADMIN_USE | esxi-admin:use | 访问 ESXi 管理界面（esxi-admin 插件专属） |
 
 ### 角色权限矩阵
 
@@ -465,6 +468,7 @@ type PluginRepository interface {
 | vm:start / vm:stop / vm:restart | ✅ | ✅ | ❌ |
 | vm:console | ✅ | ✅ | ❌ |
 | plugin:view | ✅ | ✅ | ❌ |
+| esxi-admin:use | ✅ | ❌ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
 
 自定义角色：任意权限子集；插件声明的权限在 API 层强制校验（nativeGate）。
@@ -481,7 +485,8 @@ type PluginRepository interface {
 | vm_access | id(PK), user_id, vm_id, created_at（user_id+vm_id 唯一） | 虚拟机资源授权（Phase 10，迁移 004） |
 | schema_migrations | version(PK), applied_at | 迁移版本追踪（已应用迁移自动跳过，幂等启动） |
 
-- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types` / `004_vm_access`（{up,down}.sql），按文件名顺序执行
+- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types` / `004_vm_access` / `005_esxi_admin_perm`
+  （{up,down}.sql），按文件名顺序执行
 - SQLite 方言迁移：`migrations/sqlite/`（`003` 的 ALTER ADD COLUMN 在 SQLite 无 IF NOT EXISTS，
   旧库重放报 "duplicate column name" 由迁移器视为已应用，兼容无版本表时期的存量库）
 - `make test-integration` 自动应用迁移后测试；`TEST_DATABASE_URL` 可覆盖连接

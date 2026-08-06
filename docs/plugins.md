@@ -60,8 +60,14 @@ type Plugin interface {
 - 声明值必须存在于权限字典（`GET /api/v1/roles/permissions`）；`proxy` 插件创建/更新
   时同样校验（管理 API 层）
 
-示例：`esxiadmin` 声明 `plugin:view`（只读配置）；`cron` 含任务调度写操作，
-声明 `plugin:manage`（仅管理员角色矩阵含该权限）。
+示例：`esxiadmin` 声明专属权限 `esxi-admin:use`（访问 ESXi 管理界面，仅 admin 角色
+默认持有）；`cron` 含任务调度写操作，声明 `plugin:manage`（仅管理员角色矩阵含该权限）。
+
+> 说明：`esxi-admin:use` 控制插件接口调用（nativeGate 强制校验）；菜单入口组级
+> （`/menu`、`/plugins/native`）仍要求通用 `plugin:view`，默认 admin 双持有。
+> 自定义角色最小授权时建议同时授予 `plugin:view`，否则菜单不可见。
+> 存量库升级：esxi-admin 在旧版声明过 `plugin:view`，迁移 `005` 会将其更新为
+> `esxi-admin:use`（管理员手动改过的其他值不受影响）。
 
 ## 原生插件：依赖注入 Deps
 

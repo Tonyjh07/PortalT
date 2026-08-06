@@ -30,12 +30,13 @@ func New() *Plugin { return &Plugin{} }
 // Info 插件元信息（菜单/权限同步用）。
 func (p *Plugin) Info() domain.Plugin {
 	return domain.Plugin{
-		ID:         "esxi-admin",
-		Name:       "ESXi 管理",
-		Icon:       "mdi:server-network",
-		Route:      "/esxi-admin",
-		SortOrder:  90,
-		Permission: domain.PERM_PLUGIN_VIEW,
+		ID:        "esxi-admin",
+		Name:      "ESXi 管理",
+		Icon:      "mdi:server-network",
+		Route:     "/esxi-admin",
+		SortOrder: 90,
+		// 声明专属权限：仅持有 esxi-admin:use 的用户可见菜单并访问 ESXi 管理界面
+		Permission: domain.PERM_ESXI_ADMIN_USE,
 		IsActive:   true,
 	}
 }

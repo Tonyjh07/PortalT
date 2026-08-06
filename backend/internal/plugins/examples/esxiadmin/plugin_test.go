@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"portalt/internal/domain"
 	"portalt/internal/plugins"
@@ -51,4 +52,31 @@ func TestEsxiAdmin_StaticFS(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, string(b), "esxiFrame")
 	assert.Contains(t, string(b), "portalt-theme")
+}
+
+// TestInfo_DeclaresDedicatedPermission 确保插件声明专属权限：
+// 值遵循「插件命名空间:操作」约定，且存在于权限字典、默认授予 admin 角色。
+// 回归保护：若改回通用 plugin:view 或命名漂移，此处立即失败。
+func TestInfo_DeclaresDedicatedPermission(t *testing.T) {
+	info := New().Info()
+	require.Equal(t, domain.PERM_ESXI_ADMIN_USE, info.Permission)
+	assert.NotEqual(t, domain.PERM_PLUGIN_VIEW, info.Permission)
+
+	// 声明值必须在权限字典内（否则角色管理 API 与 nativeGate 校验无法通过）
+	dict := domain.AllPermissions()
+	ids := make([]string, 0, len(dict))
+	for _, p := range dict {
+		ids = append(ids, p.ID)
+	}
+	assert.Contains(t, ids, info.Permission)
+
+	// 默认授予 admin 角色，普通用户/访客默认不持有
+	for _, r := range domain.DefaultRoles() {
+		switch r.ID {
+		case string(domain.RoleAdmin):
+			assert.Contains(t, r.Permissions, info.Permission)
+		default:
+			assert.NotContains(t, r.Permissions, info.Permission)
+		}
+	}
 }

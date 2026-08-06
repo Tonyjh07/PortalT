@@ -16,16 +16,17 @@ const (
 // 使用 map 结构以便 O(1) 查询，权限检查依赖此表。
 var rolePermissions = map[Role]map[string]struct{}{
 	RoleAdmin: {
-		PERM_VIEW_ALL:      {},
-		PERM_VM_VIEW:       {},
-		PERM_VM_START:      {},
-		PERM_VM_STOP:       {},
-		PERM_VM_RESTART:    {},
-		PERM_VM_MANAGE:     {},
-		PERM_VM_CONSOLE:    {},
-		PERM_PLUGIN_VIEW:   {},
-		PERM_PLUGIN_MANAGE: {},
-		PERM_USER_MANAGE:   {},
+		PERM_VIEW_ALL:       {},
+		PERM_VM_VIEW:        {},
+		PERM_VM_START:       {},
+		PERM_VM_STOP:        {},
+		PERM_VM_RESTART:     {},
+		PERM_VM_MANAGE:      {},
+		PERM_VM_CONSOLE:     {},
+		PERM_PLUGIN_VIEW:    {},
+		PERM_PLUGIN_MANAGE:  {},
+		PERM_USER_MANAGE:    {},
+		PERM_ESXI_ADMIN_USE: {},
 	},
 	RoleUser: {
 		PERM_VIEW_ALL:    {},
