@@ -8,6 +8,7 @@
 # ESXi Host Client 反代规则（iframe 嵌入 + 控制台）：
 #   - /esxi/* 剥前缀后指向 https://<esxi-host>，页面/静态资源相对路径因此可用
 #   - ESXi 资源与 API 走绝对路径 /ui/*、/sdk*、/sts*、/ticket* 等，需全部反代
+#   - /screen* 为 VM 控制台预览截图端点（漏配则预览图报 blob ERR_FILE_NOT_FOUND）
 #   - 必须剥除 X-Frame-Options: DENY（否则浏览器拒绝 iframe 加载）
 #   - 必须剥除 CSP upgrade-insecure-requests（否则 http 页面下子资源被强制升级 https）
 #   - /ticket* 为 VM 控制台 WebSocket 端点（wss://.../ticket/<ticket>），reverse_proxy 原生透传
@@ -38,6 +39,14 @@
 				tls_insecure_skip_verify
 			}
 			header_down -X-Frame-Options
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /screen* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
 			header_down -Content-Security-Policy
 		}
 	}

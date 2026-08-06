@@ -129,6 +129,8 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
   `ESXI_WEB_URL=/esxi/ui/` 同源反代，本地 http 与隧道 https 均可用）；
 - ESXi 资源/API 走**绝对路径**，需全部反代：`/ui/*`、`/sdk*`、`/sts*`、`/ticket*`、
   `/vfeed/*`、`/converter/*`、`/eam/*`、`/pbm/*`、`/sms/*`、`/vsan/*`；
+- `/screen*` 是 VM **控制台预览截图**端点（`/screen?id=<moid>&ts=<时间戳>`，相对路径，
+  轮询刷新）——漏配会落到前端 3001 兜底，预览图报 `blob:... ERR_FILE_NOT_FOUND`；
 - **必须剥除的响应头**：
   - `X-Frame-Options: DENY` —— 否则浏览器拒绝 iframe 加载（报"拒绝了我们的连接请求"）；
   - `Content-Security-Policy: upgrade-insecure-requests` —— 否则 http 页面下
@@ -221,6 +223,27 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
   无需额外对外开放端口；
 - **对外暴露前务必**：修改默认管理员密码（`admin/admin123`，见
   `ADMIN_PASSWORD`）、配置强 `JWT_SECRET`，并确认 Caddy 仅暴露在可信网络/隧道内。
+
+### Caddyfile 快速配置（生产）
+
+仓库 `caddy/Caddyfile` 是唯一权威配置（**本机调试用的临时版不部署**，两者差异仅
+`CADDY_PORT` 变量/`/healthz` handle/注释态的 8443、443 块）。生产配置只需三步：
+
+1. 复制 `caddy/Caddyfile` 到部署机（如 `C:\portalt\caddy\Caddyfile`），**无需改内容**；
+2. 环境变量注入（可写入服务/计划任务环境）：
+   ```powershell
+   $env:CADDY_PORT = "8808"                   # 入口端口（默认 8808，改后同步隧道 ingress）
+   $env:ESXI_UPSTREAM = "192.168.118.129"     # 目标 ESXi（默认值相同；多 ESXi 时必配）
+   ```
+3. 启动：`caddy run --config C:\portalt\caddy\Caddyfile`；
+   需要 ESXi 管理界面嵌入时另起 https 入口：按 §四·六 生成自签 RSA 证书并解开
+   `https://:8443` 注释块（证书路径改为部署机实际路径）。
+
+> **"拉仓库改了就能跑"需要的前置**：Caddyfile 本身 `caddy validate` 即可用，但完整门户
+> 还需——后端二进制（`go build ./cmd/server`，配 `VIRT_PROVIDER`/ESXi 凭据/DB/JWT
+> 等环境变量，见 `.env.example`）、前端产物（`npm run build` 后 `node .output/server/index.mjs`，
+> 端口 3001）、远程桌面需 guacd（`docker compose up -d guacd`）、外部依赖：ESXi
+> 可达、cloudflared 隧道指向 `CADDY_PORT`、8443 证书已生成并信任。
 
 ## dev 模式经隧道的已知问题
 
