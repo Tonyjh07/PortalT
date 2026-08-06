@@ -70,6 +70,18 @@ const (
 	defaultVNCHeight = 800
 )
 
+// 远程桌面质量模式（WS query 参数 mode，会话级，优先级高于 VM metadata）。
+// 模式只影响质量档位（分辨率/色深/渲染特效/音频），不改变连接目标与凭证。
+const (
+	modeAuto    = "auto"
+	modeQuality = "quality"
+	modeFluency = "fluency"
+
+	// fluency 档的会话分辨率：固定小档，显著降低每帧传输量
+	fluencyWidth  = 1024
+	fluencyHeight = 640
+)
+
 // internalOpcodePrefix 客户端内部指令（如稳定性 ping）的字节前缀。
 // 内部指令 opcode 为空字符串，线格式为 "0.,..."。
 var internalOpcodePrefix = []byte("0.")
@@ -107,9 +119,10 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 	}
 	defer clientConn.Close()
 
-	// 服务端完成与 guacd 的协议握手（连接参数全部来自 VM metadata）
+	// 服务端完成与 guacd 的协议握手（连接参数全部来自 VM metadata +
+	// 会话级质量模式 mode 的档位覆盖）
 	stream := guac.NewStream(guacdConn, guac.SocketTimeout)
-	cfg := guacConfigFromVM(vm)
+	cfg := guacConfigFromVM(vm, parseMode(c.Query("mode")))
 	if err := stream.Handshake(&cfg); err != nil {
 		// 握手失败（guacd 拒绝/目标不可达等）：以内部错误码关闭 WS
 		_ = clientConn.WriteControl(websocket.CloseMessage,
@@ -193,10 +206,21 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 	<-done
 }
 
-// guacConfigFromVM 依据 VM metadata（guac.* 键）构造 guacd 握手配置。
-// 优先级：metadata 显式值 > 虚拟机固有属性（IP）> 协议默认值。
+// parseMode 解析并校验会话级质量模式，非法或空值回退 auto。
+func parseMode(s string) string {
+	switch s {
+	case modeQuality, modeFluency:
+		return s
+	default:
+		return modeAuto
+	}
+}
+
+// guacConfigFromVM 依据 VM metadata（guac.* 键）与质量模式构造 guacd 握手配置。
+// 优先级：mode=fluency 强制覆盖（分辨率/色深/渲染特效/音频）> metadata 显式值
+// > 虚拟机固有属性（IP）> 协议默认值。mode=auto 等同默认参数（画质偏置）。
 // 浏览器侧不参与握手，因此 hostname/port/password 等敏感参数无法被覆盖。
-func guacConfigFromVM(vm *domain.VM) guac.Config {
+func guacConfigFromVM(vm *domain.VM, mode string) guac.Config {
 	protocol := metadataString(vm, "guac.protocol")
 	if protocol == "" {
 		protocol = "vnc"
@@ -218,30 +242,57 @@ func guacConfigFromVM(vm *domain.VM) guac.Config {
 	}
 	width := metadataInt(vm, "guac.width", defaultVNCWidth)
 	height := metadataInt(vm, "guac.height", defaultVNCHeight)
+	fluency := mode == modeFluency
+	if fluency {
+		width = fluencyWidth
+		height = fluencyHeight
+	}
+
+	params := map[string]string{
+		"hostname":               host,
+		"port":                   port,
+		"username":               metadataString(vm, "guac.username"),
+		"password":               metadataString(vm, "guac.password"),
+		"domain":                 metadataString(vm, "guac.domain"),
+		"security":               metadataString(vm, "guac.security"),
+		"ignore-cert":            metadataString(vm, "guac.ignore-cert"),
+		"read-only":              metadataString(vm, "guac.read-only"),
+		"autoretry":              metadataString(vm, "guac.autoretry"),
+		"color-depth":            metadataString(vm, "guac.color-depth"),
+		"disable-bitmap-caching": metadataString(vm, "guac.disable-bitmap-caching"),
+		"enable-wallpaper":       metadataString(vm, "guac.enable-wallpaper"),
+		"enable-theming":         metadataString(vm, "guac.enable-theming"),
+		"enable-font-smoothing":  metadataString(vm, "guac.enable-font-smoothing"),
+		"create-recording-path":  metadataString(vm, "guac.create-recording-path"),
+	}
+	if fluency {
+		// 流畅优先：降色深（RDP 16 / VNC 8）+ 关闭 RDP 桌面特效。
+		// 位图缓存保留（关闭反而因重复传输更卡）。
+		// ssh/telnet 无 color-depth 概念，guacd 忽略该参数，设置无害。
+		if protocol == "rdp" {
+			params["color-depth"] = "16"
+			params["enable-wallpaper"] = "false"
+			params["enable-theming"] = "false"
+			params["enable-font-smoothing"] = "false"
+		} else {
+			params["color-depth"] = "8"
+		}
+	}
+
+	// 音频仅 RDP 有意义：画质优先档开启 PCM 立体声（浏览器 RawAudioPlayer
+	// 支持 audio/L16）；流畅档与 auto 保持静音以节省带宽。
+	var audio []string
+	if mode == modeQuality && protocol == "rdp" {
+		audio = []string{"audio/L16;rate=44100,channels=2"}
+	}
 
 	return guac.Config{
-		Protocol: protocol,
-		Parameters: map[string]string{
-			"hostname":               host,
-			"port":                   port,
-			"username":               metadataString(vm, "guac.username"),
-			"password":               metadataString(vm, "guac.password"),
-			"domain":                 metadataString(vm, "guac.domain"),
-			"security":               metadataString(vm, "guac.security"),
-			"ignore-cert":            metadataString(vm, "guac.ignore-cert"),
-			"read-only":              metadataString(vm, "guac.read-only"),
-			"autoretry":              metadataString(vm, "guac.autoretry"),
-			"color-depth":            metadataString(vm, "guac.color-depth"),
-			"disable-bitmap-caching": metadataString(vm, "guac.disable-bitmap-caching"),
-			"enable-wallpaper":       metadataString(vm, "guac.enable-wallpaper"),
-			"enable-theming":         metadataString(vm, "guac.enable-theming"),
-			"enable-font-smoothing":  metadataString(vm, "guac.enable-font-smoothing"),
-			"create-recording-path":  metadataString(vm, "guac.create-recording-path"),
-		},
+		Protocol:            protocol,
+		Parameters:          params,
 		OptimalScreenWidth:  width,
 		OptimalScreenHeight: height,
 		OptimalResolution:   96,
-		AudioMimetypes:      []string{},
+		AudioMimetypes:      audio,
 		VideoMimetypes:      []string{},
 		ImageMimetypes:      []string{},
 	}

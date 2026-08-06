@@ -3,12 +3,12 @@ declare module 'guacamole-common-js' {
   namespace Guacamole {
     class Client {
       constructor(tunnel: Tunnel)
-      connect(): void
+      connect(data?: string): void
       disconnect(): void
       getDisplay(): Display
       sendMouseState(state: MouseState, sync?: boolean): void
       sendKeyEvent(pressed: 0 | 1, keysym: number): void
-      sendSize(width: number, height: number, dpi?: number): void
+      sendSize(width: number, height: number): void
       onerror: (error: { message?: string }) => void
       onstatechange: (state: number) => void
       static State: {
@@ -32,13 +32,20 @@ declare module 'guacamole-common-js' {
 
     class WebSocketTunnel extends Tunnel {
       constructor(tunnelURL: string, receiveTimeout?: number, token?: string)
+      oninstruction: ((opcode: string, parameters: string[]) => void) | null
     }
+
+    class Layer {}
 
     class Display {
       getElement(): HTMLElement
       getWidth(): number
       getHeight(): number
-      scale: number
+      scale(scale: number): void
+      getScale(): number
+      draw(layer: Layer, x: number, y: number, url: string): void
+      drawImage: (...args: unknown[]) => void
+      drawBlob: (...args: unknown[]) => void
     }
 
     class Mouse {

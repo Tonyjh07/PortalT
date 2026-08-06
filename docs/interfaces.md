@@ -189,6 +189,10 @@ GET /api/v1/guac/ws/:vmId
 - 握手失败以 WS Close 1001（内部错误）关闭；guacd 不可达返回 502；VM 不存在返回 404
 - 子协议：升级时回显 `guacamole`（guacamole-common-js 固定携带该子协议）
 - 客户端内部指令（稳定性 ping，opcode 为空）由服务端回显，不转发 guacd
+- **会话级质量模式**：WS 查询参数 `mode=auto|quality|fluency`（缺省 auto）——
+  fluency 强制小分辨率（1024×640）+ 低色深（RDP 16 / VNC 8）+ 关闭 RDP 桌面特效
+  + 静音；quality 开启 RDP 音频（`audio/L16;rate=44100,channels=2`）；auto 等同默认。
+  模式只调质量档位，不改变连接目标与凭证；语义详见 [remote-desktop.md](./remote-desktop.md)
 
 #### VM metadata `guac.*` 连接参数契约
 

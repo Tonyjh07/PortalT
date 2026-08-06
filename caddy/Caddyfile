@@ -129,6 +129,9 @@
 
 # 主入口：http（cloudflared 隧道 origin 走此端口）
 :{$CADDY_PORT:8808} {
+	# 静态资源与反代响应压缩（低带宽下加载提速；WS 升级不受影响）。
+	# 注：仅用 gzip——本机 caddy 版本未编译 brotli encoder（http.encoders.br 未注册）
+	encode gzip
 	import esxi_proxy_routes
 }
 

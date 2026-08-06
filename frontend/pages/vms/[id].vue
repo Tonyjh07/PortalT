@@ -20,6 +20,19 @@ const rdState = reactive({ connecting: false, connected: false })
 // 远程桌面配置对话框打开时暂停全局键盘监听（否则弹窗内无法输入）
 const rdConfigOpen = ref(false)
 
+// 远程桌面质量模式（自动/画质优先/流畅优先），选择持久化到本地
+const RD_MODES = ['auto', 'quality', 'fluency'] as const
+const RD_MODE_LABELS: Record<(typeof RD_MODES)[number], string> = {
+  auto: '自动',
+  quality: '画质优先',
+  fluency: '流畅优先',
+}
+const rdMode = ref<(typeof RD_MODES)[number]>(() => {
+  const saved = localStorage.getItem('rd-mode')
+  return (RD_MODES as readonly string[]).includes(saved ?? '') ? (saved as (typeof RD_MODES)[number]) : 'auto'
+})
+watch(rdMode, (m) => localStorage.setItem('rd-mode', m))
+
 function toggleFullscreen() {
   const el = rdCardRef.value?.$el
   if (!el) return
@@ -263,6 +276,16 @@ onUnmounted(stopPolling)
                   vm.metadata?.['guac.port'] || '默认'
                 }}
               </el-text>
+              <el-radio-group v-model="rdMode" size="small">
+                <el-radio-button
+                  v-for="m in RD_MODES"
+                  :key="m"
+                  :value="m"
+                  :title="m === 'auto' ? '按网络状况自动选择' : undefined"
+                >
+                  {{ RD_MODE_LABELS[m] }}
+                </el-radio-button>
+              </el-radio-group>
               <el-button size="small" type="primary" plain @click="toggleFullscreen">全屏</el-button>
             </div>
             <div v-if="vm.status !== 'poweredOn'" class="rd-placeholder">
@@ -274,9 +297,10 @@ onUnmounted(stopPolling)
               <p>无远程桌面权限（vm:console），请联系管理员</p>
             </div>
             <template v-else>
-              <VmRemoteDesktop
+              <LazyVmRemoteDesktop
                 :vm="vm"
                 :paused="rdConfigOpen"
+                :mode="rdMode"
                 @state="onRdState"
               />
             </template>

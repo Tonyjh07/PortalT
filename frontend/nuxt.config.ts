@@ -25,6 +25,9 @@ export default defineNuxtConfig({
     },
   },
   nitro: {
+    // 构建时生成 .gz/.br 预压缩产物，node 直连/preview 时 h3 按
+    // Accept-Encoding 自动协商，低带宽下 JS/CSS 体积约降 70%。
+    compressPublicAssets: { gzip: true, brotli: true },
     devProxy: {
       '/api': {
         target: 'http://localhost:8080/api',
