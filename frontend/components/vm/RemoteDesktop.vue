@@ -138,6 +138,12 @@ function connect() {
 }
 
 function disconnect() {
+  // 必须先清空键盘回调再丢引用：guacamole-common-js 的 Keyboard 把
+  // keydown/keyup 监听永久挂在 document 上且无 dispose/removeEventListener，
+  // 若不清空 onkeydown/onkeyup，组件卸载后仍会拦截并 preventDefault 全局按键，
+  // 导致切到其他页面后所有输入框无法输入。清空后监听闭包虽仍残留于 document
+  // （inert，无副作用），长期可改为页面级单例复用避免累积。
+  setKeyboardActive(false)
   if (client) {
     client.disconnect()
     client = null
