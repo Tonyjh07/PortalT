@@ -1,240 +1,285 @@
-# PortalT 使用教程
+# PortalT 构建与部署指南（Debian + ESXi）
 
-从零开始：克隆仓库 → 安装依赖 → 配置 → 运行 → 验证 → 接入真实虚拟化与远程桌面。
+面向 HomeLab 的最简路径：在 ESXi 上开一台 Debian 门户虚拟机，从源码构建出后端二进制与
+前端产物，部署为两个 systemd 服务，接入真实 ESXi 统一管理 VM，可选接入 Caddy 反代、
+浏览器远程桌面与 ESXi Web 管理界面嵌入。
 
-> 相关文档：[README.md](../../README.md)（快速开始）、[conventions.md](./conventions.md)（工具链/测试规范）、[remote-desktop.md](./remote-desktop.md)（远程桌面）、[external-access.md](./external-access.md)（外网访问）。
+> 相关文档：[README.md](../../README.md)（项目概览/快速开始）、
+> [remote-desktop.md](./remote-desktop.md)（远程桌面）、[external-access.md](./external-access.md)（外网访问/反代）。
 
-## 1. 环境要求
+## 1. 架构与组件
 
-| 工具 | 版本 | 说明 |
-|------|------|------|
-| Git | 任意 | 克隆仓库 |
-| Go | 1.21+ | 后端（本机实测 1.26.5） |
-| Node.js | 20+ | 前端（本机实测 24.x） |
-| Docker | 24+ | 可选：PostgreSQL / guacd / VNC 演示（零依赖模式不需要） |
-| GNU Make | 3.81+ | 可选：便捷命令（Windows 需 msys sh.exe） |
-
-Windows PowerShell 用户注意：Go 可能不在 PATH，每个新会话先执行一次：
-
-```powershell
-$env:Path += ";C:\Program Files\Go\bin"
+```
+┌─────────────── Debian 门户 VM ───────────────┐
+│  浏览器 ──► Caddy（可选，:8808）              │
+│               ├─► 前端 preview（:3001, Nuxt SPA）┼─► /api、/native、WS ──► 后端（:8080）
+│               └─► /esxi/*、/ui/*、/screen* 等 ──► ESXi Host Client（iframe 嵌入）
+│  后端 ──► SQLite / PostgreSQL                 │
+│  后端 ──► ESXi（SOAP SDK，govmomi）           │
+│  后端 ──► guacd（可选，:4822）                │
+└───────────────────────────────────────────────┘
 ```
 
-## 2. 克隆仓库
+- **后端**：Go 单二进制，REST API + VM 同步 + 电源操作 + WebSocket 隧道；
+- **前端**：Nuxt 3 纯 SPA，`npm run build` 后由 Node 以 preview 模式运行；
+- **数据库**：默认 SQLite（零依赖），可换 PostgreSQL；
+- **ESXi**：后端直连 `https://<esxi-host>/sdk` 管理全部 VM（不开放 ESXi 管理端口对外）；
+- **远程桌面（可选）**：guacd 守护进程 + VM metadata 连接参数；
+- **Caddy（可选但推荐）**：唯一对外入口，反代前后端与 ESXi Web 界面。
+
+## 2. 环境要求
+
+| 组件 | 要求 | 说明 |
+|------|------|------|
+| 系统 | Debian 12+ (bookworm) | 门户 VM 建议 2 核 / 2GB+ |
+| Go | 1.21+ | 仅构建后端需要 |
+| Node.js | 20+ | 仅构建前端需要 |
+| Caddy | 任意 2.x | 可选；仓库 `caddy/Caddyfile` 直接可用 |
+| Docker | 可选 | 仅远程桌面演示/guacd 容器化时需要 |
+
+构建机可以是部署机本身（构建完即可运行），也可以另用一台机器交叉编译后拷入。
+
+## 3. 构建
+
+### 3.1 拉取源码
 
 ```bash
 git clone https://github.com/Tonyjh07/PortalT.git
 cd PortalT
 ```
 
-## 3. 目录结构
-
-```
-backend/     Go 后端（domain → ports → adapters 分层，Gin API）
-frontend/    Nuxt 3 前端（纯 SPA）
-caddy/       Caddy 反向代理配置
-docs/        文档（本文件所在目录）
-Makefile     便捷命令（init/run/test/build/up/down 等）
-.env.example 环境变量参考模板（复制为 .env 后仅作备忘，见 §4）
-docker-compose.yml  PostgreSQL / guacd / VNC 演示 / Caddy
-```
-
-## 4. 配置
-
-### 4.1 重要说明：环境变量的加载方式
-
-- 后端（Go）**直接读取系统环境变量**，**不会自动加载 `.env` 文件**。
-- `.env.example` 是参考模板：复制为 `.env` 记录你的配置即可，但要让配置生效必须写到 shell 环境变量（或部署时的系统服务/Docker 注入）。
-- PowerShell 中设置方式（对当前会话生效，`go run` / `make` 均继承）：
-
-```powershell
-$env:DB_DRIVER = "sqlite"
-$env:DB_DSN = "portalt.db"
-$env:VIRT_PROVIDER = "mock"
-$env:GUACD_URL = "127.0.0.1:4822"
-```
-
-### 4.2 环境变量一览
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `DB_DRIVER` | `sqlite` | `postgres` / `sqlite`（sqlite 零依赖调试） |
-| `DB_DSN` | 空（内存库） | postgres 连接串 / sqlite 文件路径（如 `portalt.db`） |
-| `DB_MIGRATIONS_DIR` | `migrations` | 迁移脚本目录 |
-| `VIRT_PROVIDER` | `mock` | 虚拟化平台：`mock` / `esxi` / `workstation` |
-| `VIRT_URL` / `VIRT_USERNAME` / `VIRT_PASSWORD` / `VIRT_INSECURE` | 空 | 通用虚拟化配置（缺省回退 `VIRT_ESXI_*` → `VIRT_WS_*`） |
-| `GUACD_URL` | 空 | guacd 原生隧道地址（如 `127.0.0.1:4822`），远程桌面推荐模式 |
-| `GUAC_URL` | 空 | 旧模式：Guacamole Web 应用 WS 代理（与 `GUACD_URL` 二选一） |
-| `GUAC_SECRET` | 空 | 旧模式签名密钥 |
-| `JWT_SECRET` | 开发密钥 | 生产必须显式配置 |
-| `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL` | `900` / `604800`（秒） | 令牌有效期 |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动自动引导的管理员账号 |
-| `DOMAIN` | - | Caddy 部署域名（见 `caddy/Caddyfile`） |
-
-## 5. 安装依赖
-
-二选一：
-
-```bash
-# 方式 A：Makefile（会同时处理目录骨架）
-make init
-
-# 方式 B：手动
-cd backend && go mod download && cd ..
-cd frontend && npm install --no-fund --no-audit && cd ..
-```
-
-网络提示：Go 依赖已走 `goproxy.cn` 镜像（全局配置，勿改回）；若 npm 安装超时可配置 npm 镜像源。
-
-## 6. 运行（零依赖快速开始）
-
-无需 Docker、无需真实虚拟化环境，直接跑通全栈：
-
-```powershell
-# 终端 1：后端（sqlite 内存库 + mock 虚拟化）
-$env:Path += ";C:\Program Files\Go\bin"
-$env:GUACD_URL = "127.0.0.1:4822"   # 远程桌面需要，可后补
-go run ./cmd/server
-
-# 终端 2：前端（127.0.0.1:3000，/api 自动代理到 8080）
-npm run dev
-```
-
-访问 http://127.0.0.1:3000 ，使用 `admin` / `admin123` 登录。
-
-> 想让数据持久化：`$env:DB_DSN = "portalt.db"`（生成 sqlite 文件）。
-
-### 验证后端
-
-```powershell
-curl.exe -X POST http://127.0.0.1:8080/api/v1/auth/login -H "Content-Type: application/json" -d '{\"username\":\"admin\",\"password\":\"admin123\"}'
-# 返回 {"code":200,...,"data":{"access_token":"...","refresh_token":"...",...}}
-```
-
-```powershell
-curl.exe http://127.0.0.1:8080/api/v1/vms
-# {"code":200,"message":"success","data":[{"id":...,"name":"mock-web-01",...}]}
-```
-
-## 7. 完整环境（Docker）
-
-启动 PostgreSQL + guacd（远程桌面守护进程）+ VNC 演示目标 + Caddy：
-
-```bash
-docker compose up -d
-```
-
-| 容器 | 端口 | 用途 |
-|------|------|------|
-| portalt-postgres | 5432 | 生产数据库 |
-| portalt-guacd | 4822 | Guacamole 协议守护进程 |
-| portalt-vnc-demo | 5900 | VNC 演示桌面（密码 `portalt-demo`） |
-| portalt-caddy | 80/443 | 反向代理 + 自动 HTTPS |
-
-使用 PostgreSQL 运行后端：
-
-```powershell
-$env:DB_DRIVER = "postgres"
-$env:DB_DSN = "postgres://portalt:securepassword@127.0.0.1:5432/portalt?sslmode=disable"
-go run ./cmd/server
-```
-
-## 8. 接入真实虚拟化平台
-
-### 8.1 ESXi
-
-```powershell
-$env:VIRT_PROVIDER = "esxi"
-$env:VIRT_ESXI_URL = "https://esxi.lan/sdk"
-$env:VIRT_ESXI_USERNAME = "root"
-$env:VIRT_ESXI_PASSWORD = "password"
-$env:VIRT_ESXI_INSECURE = "true"
-go run ./cmd/server
-```
-
-启动时后端会调用 `SyncVMs` 全量对齐平台 VM 目录（平台侧已删除的 VM 会从本系统移除）。
-
-### 8.2 VMware Workstation（vmrest，本机调试）
-
-适合本机跑 Workstation 做开发调试。前置步骤（Windows，需管理员权限）：
-
-```powershell
-cd "C:\Program Files (x86)\VMware\VMware Workstation"
-.\vmrest.exe -C        # 设置凭证（保存到 %USERPROFILE%\vmrest.cfg）
-.\vmrest               # 启动 REST 服务（HTTPS 需 -c 证书 -k 私钥）
-```
-
-然后：
-
-```powershell
-$env:VIRT_PROVIDER = "workstation"
-$env:VIRT_WS_URL = "http://127.0.0.1:8697"
-$env:VIRT_WS_USERNAME = "<vmrest 用户名>"
-$env:VIRT_WS_PASSWORD = "<vmrest 密码>"
-go run ./cmd/server
-```
-
-> 适配器对 vmrest 各版本字段差异做了容错（状态大小写变体、CPU/内存新旧字段名），若仍解析异常，可先 `curl.exe http://127.0.0.1:8697/api/vms` 对比实际返回。
-
-## 9. 远程桌面（Guacamole）
-
-- 后端设置 `GUACD_URL=127.0.0.1:4822`（或 Docker 内 `guacd:4822`）后，前端 VM 卡片点「远程桌面」即可用。
-- 连接参数**全部来自 VM metadata 的 `guac.*` 字段**（数据库 `vms.metadata` jsonb / sqlite json 列），不是全局配置：
-
-```json
-{
-  "guac.protocol": "vnc",
-  "guac.hostname": "127.0.0.1",
-  "guac.port": "5900",
-  "guac.username": "",
-  "guac.password": "portalt-demo",
-  "guac.width": "1280",
-  "guac.height": "800"
-}
-```
-
-- 缺省规则：hostname 缺省用 `VM.IPAddress`；port 按协议默认 vnc 5900 / rdp 3389 / ssh 22。
-- 演示环境零配置即可用：mock 虚拟机的 metadata 已指向 compose 里的 `portalt-vnc-demo`（需 Docker 侧启动）。
-
-详细排错见 [remote-desktop.md](./remote-desktop.md)。
-
-## 10. 外网访问（Cloudflare Tunnel）
-
-dev 模式前端固定监听 `127.0.0.1:3000`，经 `cloudflared` 隧道（域名 `demo.tonyjh07.dpdns.org`）可暴露到公网：
-
-1. `~/.cloudflared/config.yml` 配置 ingress → `http://127.0.0.1:3000`；
-2. 若浏览器报 `Blocked request. This host is not allowed`，把域名加进 `frontend/nuxt.config.ts` 的 `vite.server.allowedHosts` 并**重启 dev server**；
-3. WS 升级走 `frontend/modules/wsProxy.ts`（仅 dev），无需额外配置。
-
-完整流程与生产部署（Caddy）见 [external-access.md](./external-access.md)。
-
-## 11. 测试
-
-```bash
-make test          # 单元测试汇总（domain + 仓储 + 虚拟化 + API）
-make test-sqlite   # SQLite 集成测试（免服务）
-make test-esxi     # ESXi 适配器（vcsim 模拟，免真实环境）
-make test-integration  # 全部集成测试（PostgreSQL 需先 docker compose up -d postgres）
-make test-race     # 竞态检测（Windows 需 MinGW，Makefile 自动探测）
-```
-
-或直接（推荐日常使用）：
+### 3.2 后端二进制
 
 ```bash
 cd backend
-go test ./... -count=1
+go build -o portalt-server ./cmd/server
 ```
 
-> 注意：esxi 与集成测试默认被 build tag 排除（`-tags esxi` / `-tags integration` 才跑）；`go test ./...` 默认不含它们。提交前须保证上述命令全绿。
+产物 `portalt-server` 是单文件，可直接拷贝部署。国内网络若下载依赖超时，
+已配置 `goproxy.cn` 镜像；必要时手动设置：
 
-## 12. 常见问题
+```bash
+go env -w GOPROXY=https://goproxy.cn,direct
+```
+
+### 3.3 前端产物
+
+```bash
+cd frontend
+npm ci            # 按 lockfile 安装（避免版本漂移）
+npm run build     # 产出 .output/（纯 SPA，无需 SSR）
+```
+
+产物目录 `frontend/.output/` 整目录拷贝部署。前端以 preview 模式运行：
+
+```bash
+PORT=3001 node .output/server/index.mjs
+```
+
+## 4. 配置（环境变量）
+
+后端**直接读取系统环境变量**，不加载 `.env` 文件；生产环境用 systemd
+`EnvironmentFile` 注入。常用变量（完整清单见仓库 `.env.example`）：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `DB_DRIVER` | `sqlite` | `sqlite`（零依赖）/ `postgres` |
+| `DB_DSN` | 空（内存库） | sqlite 文件路径如 `/opt/portalt/portalt.db` |
+| `VIRT_PROVIDER` | `mock` | `esxi` 接入真实平台；`mock` 无平台也可演示 |
+| `VIRT_URL` | - | ESXi 地址，如 `https://192.168.1.100/sdk` |
+| `VIRT_USERNAME` / `VIRT_PASSWORD` | - | ESXi 账号（如 root） |
+| `VIRT_INSECURE` | `false` | ESXi 自签证书时设 `true` |
+| `JWT_SECRET` | 开发密钥 | **生产必须显式设置**，如 `openssl rand -hex 32` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动引导的管理员账号，**上线前务必改** |
+| `GUACD_URL` | 空 | guacd 地址如 `127.0.0.1:4822`（远程桌面，可选） |
+| `PORT` | `127.0.0.1:8080` | 后端监听地址（保持 127.0.0.1，由 Caddy 反代） |
+
+配置示例（`/opt/portalt/portalt.env`）：
+
+```bash
+DB_DRIVER=sqlite
+DB_DSN=/opt/portalt/portalt.db
+VIRT_PROVIDER=esxi
+VIRT_URL=https://192.168.1.100/sdk
+VIRT_USERNAME=root
+VIRT_PASSWORD=change-me
+VIRT_INSECURE=true
+JWT_SECRET=replace-with-openssl-rand-hex-32
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=change-me-too
+```
+
+`JWT_SECRET` 先在本机生成再填：`openssl rand -hex 32`（`EnvironmentFile` 是纯 key=value，
+不支持命令替换）。
+
+安全注意：该文件含 ESXi 明文凭据，权限设为 `600` 且仅 root 可读
+（`chmod 600`、目录 `chmod 700`）。
+
+## 5. 部署（systemd）
+
+将二进制与产物放到 `/opt/portalt/`，然后创建两个服务单元。
+
+### 后端 `portalt-backend.service`
+
+```ini
+[Unit]
+Description=PortalT backend
+After=network.target
+
+[Service]
+WorkingDirectory=/opt/portalt
+ExecStart=/opt/portalt/portalt-server
+EnvironmentFile=/opt/portalt/portalt.env
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+### 前端 `portalt-frontend.service`
+
+```ini
+[Unit]
+Description=PortalT frontend preview
+After=network.target portalt-backend.service
+
+[Service]
+WorkingDirectory=/opt/portalt/frontend
+Environment=PORT=3001
+ExecStart=/usr/bin/node .output/server/index.mjs
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+> 生产部署**必须经过 Caddy**（见 §7）：nuxt preview 的 `/api` 反代走 `routeRules`，
+> 不支持 WebSocket 升级，远程桌面/ESXi 控制台的 WS 通道由 Caddy 负责透传。
+
+### 启动与验证
+
+```bash
+systemctl daemon-reload
+systemctl enable --now portalt-backend portalt-frontend
+
+# 验证后端
+curl http://127.0.0.1:8080/healthz
+curl -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"change-me-too"}'
+# 返回 {"code":200,...,"data":{"access_token":"...",...}} 即正常
+```
+
+## 6. 接入真实 ESXi
+
+1. 在 `portalt.env` 中设置 `VIRT_PROVIDER=esxi` 与 `VIRT_URL`/`VIRT_USERNAME`/
+   `VIRT_PASSWORD`/`VIRT_INSECURE`（见 §4）；
+2. 重启后端：`systemctl restart portalt-backend`——启动时会执行一次 `SyncVMs`
+   全量同步，把 ESXi 上所有 VM 拉入门户目录（平台侧已删除的 VM 会被移除，属预期）；
+3. 验证：
+
+```bash
+# jq 未安装先装：apt install -y jq
+TOKEN=$(curl -s -X POST http://127.0.0.1:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"change-me-too"}' | jq -r .data.access_token)
+curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/vms | jq
+# data[] 应包含真实 VM（id/name/status/cpu/memory 等），带 Metadata.moid
+```
+
+4. 门户内即可对 VM 执行 开机/关机/重启（受状态规则约束：仅 poweredOff/suspended
+   可开机）。VM 的 IP/控制台等均无需开放 ESXi 对外端口。
+
+> 备用：未配置凭据时 `VIRT_PROVIDER=mock` 仍可完整演示门户（内置 3 台示例 VM）。
+
+## 7. Caddy 反向代理（可选但推荐）
+
+仓库 `caddy/Caddyfile` 是生产权威配置，复制即用、无需改内容（入口端口 `CADDY_PORT`、
+目标 ESXi `ESXI_UPSTREAM` 由环境变量控制）。Debian 包自带 systemd 单元，直接接管：
+
+```bash
+apt install -y caddy
+cp caddy/Caddyfile /etc/caddy/Caddyfile
+systemctl edit caddy          # 注入环境变量（drop-in 配置）
+systemctl restart caddy
+```
+
+`systemctl edit caddy` 写入：
+
+```ini
+[Service]
+Environment=CADDY_PORT=8808
+Environment=ESXI_UPSTREAM=192.168.1.100
+```
+
+（快速验证也可前台跑：`caddy run --config caddy/Caddyfile`，注意先停掉包自带的
+systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
+
+- `/api`、`/native`、WS 升级 → 后端 8080；页面 → 前端 3001；
+- `/esxi/*`、`/ui/*`、`/screen*` 等 → ESXi Host Client（iframe 嵌入管理界面，
+  含 VM 控制台预览截图；`/ticket` WS 控制台）；
+- **ESXi Web 界面嵌入还要求 https 入口**（ESXi 前端硬编码 `https://`/`wss://`，
+  http 页面下无法登录/开控制台）：隧道域名本身是 https 可直接用；本机/局域网访问
+  按 `./external-access.md` §四·六 生成自签 RSA 证书并解开 `https://:8443`
+  注释块，`tls` 指令里的证书路径改为部署机实际路径（勿用 `tls internal`，
+  ECC 证书在 Windows 客户端握手失败）；
+- 外网暴露（Cloudflare Tunnel/域名 TLS）完整流程见 `./external-access.md`。
+
+## 8. 浏览器远程桌面（可选）
+
+1. 启动 guacd：`docker compose up -d guacd`（或二进制方式安装 guacd 1.5.x）；
+2. 后端配置 `GUACD_URL=127.0.0.1:4822` 并重启；
+3. **连接参数按 VM 各自配置**，存于该 VM 的 metadata `guac.*` 键（门户 VM 详情页
+   有配置面板，仅管理员）：
+   ```json
+   {
+     "guac.protocol": "vnc",
+     "guac.hostname": "192.168.1.50",
+     "guac.port": "5900",
+     "guac.password": "vnc-pass"
+   }
+   ```
+   缺省：hostname 用 VM.IPAddress；port 按协议 vnc 5900 / rdp 3389 / ssh 22；
+4. VM 卡片点「远程桌面」即连。演示/调试：compose 提供 `portalt-vnc-demo`
+   （VNC 5900，密码 `portalt-demo`），mock VM 的 metadata 已指向它。
+
+详细参数与排错见 [remote-desktop.md](./remote-desktop.md)。
+
+## 9. 验证清单（部署完成）
+
+| 项 | 方法 |
+|----|------|
+| 后端健康 | `curl http://127.0.0.1:8080/healthz` → 200 |
+| 登录 | 浏览器访问入口 → `admin` 登录成功 |
+| VM 目录 | VM 列表显示真实 ESXi VM（含状态/资源） |
+| 电源操作 | 对测试 VM 执行 开机/关机/重启，状态轮询生效 |
+| ESXi 管理界面 | esxi-admin 插件页：加载、登录、VM 控制台可打开 |
+| 远程桌面（可选） | VM 详情页「远程桌面」连上并渲染画面 |
+
+## 10. 常见问题
 
 | 现象 | 处理 |
 |------|------|
-| `go: command not found` / PowerShell 找不到 go | `$env:Path += ";C:\Program Files\Go\bin"` |
-| 依赖下载超时 | Go 已配 `goproxy.cn`；npm 失败则配置 npm registry 镜像 |
-| 前端 `Blocked request. This host is not allowed` | `nuxt.config.ts` 的 `vite.server.allowedHosts` 加域名后重启 dev server |
-| 远程桌面一直 WAITING / 打不开 | 查 VM metadata `guac.*` 是否指向可达目标；guacd 容器是否 healthy（`docker compose ps`） |
-| 修改 `nuxt.config.ts` host/allowedHosts 不生效 | dev server 必须重启 |
-| 拉取 Docker 镜像失败 | 本机已配 `docker.m.daocloud.io` 镜像源；改 `~/.docker/daemon.json` 后必须完全退出 Docker Desktop 再启动 |
-| 登录后 401 | 管理员账号由环境变量引导；后端日志会打印「管理员账号已就绪」 |
+| 登录返回 401 | 管理员账号由 `ADMIN_USERNAME/ADMIN_PASSWORD` 引导，检查 `portalt.env` 与实际值 |
+| VM 列表为空 | 看后端日志 `journalctl -u portalt-backend`；检查 ESXi 地址/凭据/自签（`VIRT_INSECURE`） |
+| 电源操作报错 | 状态规则限制（如已开机的 VM 不能再次开机）；ESXi 会话/权限问题看日志 |
+| 端口被占用 | `ss -ltnp` 查 8080/3001/8808 占用；改 `PORT`/`CADDY_PORT` 后需同步 Caddy/隧道 |
+| ESXi 管理界面打不开 | 确认 https 入口（8443 或隧道域名）；metadata/`ESXI_WEB_URL` 指向 `/esxi/ui/` |
+| 远程桌面 WAITING | guacd 是否运行；VM metadata `guac.*` 是否指向可达目标（见 §8） |
+| 构建下载超时 | Go：`go env -w GOPROXY=https://goproxy.cn,direct`；npm：配置镜像 registry |
+
+## 11. 测试（开发/交付前）
+
+```bash
+cd backend && go test ./... -count=1     # 单元+仓储+API 全量（首跑偏慢属正常）
+go test -tags esxi ./internal/adapters/esxi/...   # vcsim 模拟 vCenter（免真实环境）
+go test -tags integration ./internal/adapters/... # 真实环境集成（需自备环境，见 conventions.md）
+```
+
+- 默认 `go test ./...` 不含 esxi/integration 两组（build tag 排除）；
+- 真实 ESXi 集成测试需 `TEST_ESXI_URL/USERNAME/PASSWORD` 环境变量，见
+  `./conventions.md`「虚拟化集成测试约定」。
+
+---
+
+本地 Windows 快速开发（PowerShell + mock）见 [README.md](../../README.md)「快速开始」。

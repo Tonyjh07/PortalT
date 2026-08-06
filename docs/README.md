@@ -7,7 +7,7 @@
 | 文档 | 内容 |
 |------|------|
 | [conventions.md](./conventions.md) | 开发规范：工具链、目录、Makefile、代码风格、测试、配置 |
-| [how-to-use.md](./how-to-use.md) | 使用教程：克隆 → 依赖 → 配置 → 运行 → 远程桌面 → 排错 |
+| [how-to-use.md](./how-to-use.md) | 构建与部署指南（Debian + ESXi）：源码构建 → systemd 部署 → 接入 ESXi → Caddy 反代 → 远程桌面 → 验证/排错 |
 | [interfaces.md](./interfaces.md) | 接口文档：HTTP 接口、错误码、领域模型 JSON 契约 |
 | [plugins.md](./plugins.md) | 插件开发指南：iframe/proxy/native 三种类型与原生插件开发规范 |
 | [remote-desktop.md](./remote-desktop.md) | 远程访问指南（Phase 8）：架构、guac.*/rustdesk.* 连接参数、使用步骤、FAQ |
