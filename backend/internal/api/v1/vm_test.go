@@ -34,7 +34,7 @@ func setupVMEnv(t *testing.T) *vmEnv {
 	// 将提供者示例 VM 同步进仓储
 	_, err := svc.SyncVMs(t.Context())
 	require.NoError(t, err)
-	handler := NewVMHandler(svc)
+	handler := NewVMHandler(svc, nil)
 
 	r := gin.New()
 	r.GET("/vms", handler.List)

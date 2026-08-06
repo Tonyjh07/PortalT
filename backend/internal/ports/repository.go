@@ -75,3 +75,27 @@ type RoleRepository interface {
 	// Delete 按ID删除角色，不存在返回 ErrNotFound
 	Delete(id string) error
 }
+
+// PermissionRepository 权限字典数据仓储接口。
+// 由 adapters 层实现，供权限字典管理（角色编辑/插件声明校验）使用。
+type PermissionRepository interface {
+	// FindAll 返回全部权限字典条目，按 ID 排序
+	FindAll() ([]*domain.PermissionInfo, error)
+	// Exists 判断权限是否在字典中
+	Exists(id string) (bool, error)
+	// EnsureDefault 幂等写入默认权限字典（缺失才写入，已存在的不覆盖）
+	EnsureDefault(perms []domain.PermissionInfo) error
+}
+
+// VMAccessRepository 虚拟机资源级授权仓储接口。
+// 授权语义：记录 = 该用户可访问该 VM；管理员（vm:manage）不受此表限制。
+type VMAccessRepository interface {
+	// SetForUser 全量替换用户的可见 VM 集合（空列表 = 清空授权）
+	SetForUser(userID string, vmIDs []string) error
+	// VisibleVMIDs 返回用户全部可见 VM 的 ID 列表
+	VisibleVMIDs(userID string) ([]string, error)
+	// IsAuthorized 判断用户是否被授权访问指定 VM
+	IsAuthorized(userID, vmID string) (bool, error)
+	// DeleteForUser 删除用户的全部授权记录（删除用户时清理）
+	DeleteForUser(userID string) error
+}

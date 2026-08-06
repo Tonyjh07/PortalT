@@ -22,6 +22,7 @@ var rolePermissions = map[Role]map[string]struct{}{
 		PERM_VM_STOP:       {},
 		PERM_VM_RESTART:    {},
 		PERM_VM_MANAGE:     {},
+		PERM_VM_CONSOLE:    {},
 		PERM_PLUGIN_VIEW:   {},
 		PERM_PLUGIN_MANAGE: {},
 		PERM_USER_MANAGE:   {},
@@ -32,6 +33,7 @@ var rolePermissions = map[Role]map[string]struct{}{
 		PERM_VM_START:    {},
 		PERM_VM_STOP:     {},
 		PERM_VM_RESTART:  {},
+		PERM_VM_CONSOLE:  {},
 		PERM_PLUGIN_VIEW: {},
 	},
 	RoleViewer: {

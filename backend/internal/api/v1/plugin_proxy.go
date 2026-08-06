@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -83,6 +84,9 @@ func (h *PluginProxyHandler) Proxy(c *gin.Context) {
 	upstream.Header.Set("Content-Type", c.GetHeader("Content-Type"))
 	upstream.Header.Set("X-PortalT-User", user.Username)
 	upstream.Header.Set("X-PortalT-Role", string(user.Role))
+	// 注入用户权限集合（JSON 数组，排序确定），供插件侧做精细化的二次鉴权
+	perms, _ := json.Marshal(currentPermsList(c))
+	upstream.Header.Set("X-PortalT-Perms", string(perms))
 
 	resp, err := h.client.Do(upstream)
 	if err != nil {

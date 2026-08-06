@@ -15,11 +15,28 @@ import (
 // PluginHandler 插件管理接口处理器（管理员）。
 type PluginHandler struct {
 	plugins ports.PluginRepository
+	// perms 权限字典（可选；nil 时跳过声明权限校验）
+	perms ports.PermissionRepository
 }
 
 // NewPluginHandler 创建插件处理器。
-func NewPluginHandler(plugins ports.PluginRepository) *PluginHandler {
-	return &PluginHandler{plugins: plugins}
+func NewPluginHandler(plugins ports.PluginRepository, perms ports.PermissionRepository) *PluginHandler {
+	return &PluginHandler{plugins: plugins, perms: perms}
+}
+
+// validatePerm 校验插件声明的访问权限存在于权限字典。
+func (h *PluginHandler) validatePerm(perm string) error {
+	if perm == "" || h.perms == nil {
+		return nil
+	}
+	ok, err := h.perms.Exists(perm)
+	if err != nil {
+		return errors.New("查询权限字典失败")
+	}
+	if !ok {
+		return errors.New("未知权限: " + perm + "（仅允许权限字典中的权限，见 GET /api/v1/roles/permissions）")
+	}
+	return nil
 }
 
 // pluginRequest 插件创建/更新请求体。
@@ -88,6 +105,10 @@ func (h *PluginHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}
+	if err := h.validatePerm(req.Permission); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
 	id := req.ID
 	if id == "" {
 		id = auth.NewID()
@@ -119,6 +140,10 @@ func (h *PluginHandler) Update(c *gin.Context) {
 		return
 	}
 	if err := req.validate(); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+		return
+	}
+	if err := h.validatePerm(req.Permission); err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
 	}

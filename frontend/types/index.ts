@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'user' | 'viewer'
+export type Role = string
 
 export type VMStatus = 'poweredOn' | 'poweredOff' | 'suspended' | 'unknown'
 
@@ -7,6 +7,8 @@ export interface User {
   username: string
   email: string
   role: Role
+  /** 当前用户权限集合（/auth/me 返回，角色矩阵单一事实来源） */
+  permissions?: string[]
 }
 
 export interface RoleDefinition {

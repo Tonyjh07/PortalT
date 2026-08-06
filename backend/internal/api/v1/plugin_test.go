@@ -21,7 +21,7 @@ func setupPlugin(t *testing.T) (*gin.Engine, *memory.PluginRepository) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	repo := memory.NewPluginRepository()
-	handler := NewPluginHandler(repo)
+	handler := NewPluginHandler(repo, nil)
 
 	r := gin.New()
 	r.POST("/plugins", handler.Create)
@@ -68,6 +68,34 @@ func TestPlugin_Create_Success(t *testing.T) {
 func TestPlugin_Create_MissingRequired(t *testing.T) {
 	r, _ := setupPlugin(t)
 	w := pluginDo(t, r, http.MethodPost, "/plugins", map[string]any{"name": "无路由"})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestPluginHandler_PermissionDictValidation(t *testing.T) {
+	// 权限字典已 seed：声明字典内权限 OK，字典外 400
+	gin.SetMode(gin.TestMode)
+	repo := memory.NewPluginRepository()
+	perms := memory.NewPermissionRepository()
+	require.NoError(t, perms.EnsureDefault(domain.AllPermissions()))
+	handler := NewPluginHandler(repo, perms)
+
+	r := gin.New()
+	r.POST("/plugins", handler.Create)
+
+	// 字典内权限 → 200
+	w := pluginDo(t, r, http.MethodPost, "/plugins", map[string]any{
+		"name": "受限工具", "route": "/tool", "type": "proxy",
+		"api_url": "http://127.0.0.1:1", "permission": "vm:view",
+		"endpoints": []any{map[string]any{"method": "GET", "path": "/api/info"}},
+	})
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 字典外权限 → 400
+	w = pluginDo(t, r, http.MethodPost, "/plugins", map[string]any{
+		"name": "越权工具", "route": "/tool2", "type": "proxy",
+		"api_url": "http://127.0.0.1:1", "permission": "vm:destroy",
+		"endpoints": []any{map[string]any{"method": "GET", "path": "/api/info"}},
+	})
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/wwt/guac"
 
 	"portalt/internal/api/middleware"
+	"portalt/internal/adapters/memory"
 	"portalt/internal/domain"
 	"portalt/internal/ports"
 )
@@ -115,12 +116,52 @@ func setupGuacd(t *testing.T, user *domain.User, guacdAddr string, vm *domain.VM
 			return nil, ports.ErrNotFound
 		}
 		return vm, nil
-	})
+	}, nil)
 	r.GET("/guac/ws/:vmId", h.Proxy)
 
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// setupGuacdAuth 构造带资源授权校验的隧道环境（guacd 地址不可达，授权通过也不会到达拨号阶段）。
+func setupGuacdAuth(t *testing.T, user *domain.User, access ports.VMAccessRepository) *httptest.Server {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.Use(middleware.AuthRequired(&stubTokenManager{user: user}))
+	h := NewGuacdHandler("127.0.0.1:1", func(_ context.Context, id string) (*domain.VM, error) {
+		return nil, ports.ErrNotFound
+	}, access)
+	r.GET("/guac/ws/:vmId", h.Proxy)
+	srv := httptest.NewServer(r)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestGuacd_Authorization_Unauthorized_NotFound(t *testing.T) {
+	access := memory.NewVMAccessRepository()
+	require.NoError(t, access.SetForUser("limited", []string{"vm-2"}))
+	user := &domain.User{ID: "limited", Username: "limited", Role: domain.RoleUser}
+	server := setupGuacdAuth(t, user, access)
+
+	// 未授权 VM：普通 HTTP 404（不升级 WS）
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/guac/ws/vm-1", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer t")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
+
+	// 已授权 VM：授权通过后走到 getVM（这里返回 ErrNotFound → 404），与未授权表现一致
+	req, err = http.NewRequest(http.MethodGet, server.URL+"/guac/ws/vm-2", nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer t")
+	resp, err = http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 // dialTunnel 以 WebSocket 客户端身份连接隧道，返回连接。

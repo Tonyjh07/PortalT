@@ -47,5 +47,10 @@ func upsertNativePlugin(ctx context.Context, repo ports.PluginRepository, info d
 	if existing.SortOrder == 0 {
 		existing.SortOrder = 100
 	}
+	// 声明权限作为默认值：仅当管理员未配置过（为空）时回填，
+	// 已有配置（含故意留空）一律不覆盖——管理员调整优先。
+	if existing.Permission == "" && info.Permission != "" {
+		existing.Permission = info.Permission
+	}
 	return repo.Save(existing)
 }

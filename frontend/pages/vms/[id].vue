@@ -7,6 +7,7 @@ definePageMeta({ middleware: 'auth' })
 const route = useRoute()
 const router = useRouter()
 const { api } = useApi()
+const { hasPerm } = useAuth()
 
 const vm = ref<VM | null>(null)
 const loading = ref(false)
@@ -210,7 +211,7 @@ onUnmounted(stopPolling)
                   <el-tag v-if="rdState.connected" type="success" size="small" effect="plain">已连接</el-tag>
                   <el-tag v-else-if="rdState.connecting" type="info" size="small" effect="plain">连接中</el-tag>
                   <el-tag v-else type="warning" size="small" effect="plain">未连接</el-tag>
-                  <el-popover v-if="rdId" placement="bottom-end" :width="300" trigger="click">
+                  <el-popover v-if="rdId && hasPerm('vm:console')" placement="bottom-end" :width="300" trigger="click">
                     <template #reference>
                       <el-button size="small" plain :title="'RustDesk 一键连接'">
                         <IconRenderer icon="mdi:monitor" /> RustDesk
@@ -255,7 +256,7 @@ onUnmounted(stopPolling)
                 </div>
               </div>
             </template>
-            <div v-if="vm.status === 'poweredOn'" class="rd-conn-info">
+            <div v-if="vm.status === 'poweredOn' && hasPerm('vm:console')" class="rd-conn-info">
               <el-text size="small" type="info">
                 协议 {{ vm.metadata?.['guac.protocol'] || '未配置' }} ·
                 目标 {{ vm.metadata?.['guac.hostname'] || vm.ip_address || '-' }}:{{
@@ -264,16 +265,21 @@ onUnmounted(stopPolling)
               </el-text>
               <el-button size="small" type="primary" plain @click="toggleFullscreen">全屏</el-button>
             </div>
-            <VmRemoteDesktop
-              v-if="vm.status === 'poweredOn'"
-              :vm="vm"
-              :paused="rdConfigOpen"
-              @state="onRdState"
-            />
-            <div v-else class="rd-placeholder">
+            <div v-if="vm.status !== 'poweredOn'" class="rd-placeholder">
               <IconRenderer icon="mdi:desktop" :size="48" />
               <p>虚拟机未开机，启动后可打开浏览器远程桌面</p>
             </div>
+            <div v-else-if="!hasPerm('vm:console')" class="rd-placeholder">
+              <IconRenderer icon="mdi:shield-lock" :size="48" />
+              <p>无远程桌面权限（vm:console），请联系管理员</p>
+            </div>
+            <template v-else>
+              <VmRemoteDesktop
+                :vm="vm"
+                :paused="rdConfigOpen"
+                @state="onRdState"
+              />
+            </template>
           </el-card>
         </el-col>
       </el-row>

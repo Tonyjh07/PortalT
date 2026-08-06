@@ -31,6 +31,10 @@ type HandlerSet struct {
 	Native     *plugins.Registry
 	NativeDeps plugins.Deps
 	PluginRepo ports.PluginRepository
+
+	// 权限字典与虚拟机资源授权（可选，nil 时相关能力禁用/跳过校验）
+	Permissions ports.PermissionRepository
+	VMAccessH   *v1.VMAccessHandler
 }
 
 // NewRouter 装配全部路由与中间件。
@@ -101,19 +105,25 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		users.POST("", hs.User.Create)
 		users.PUT("/:id", hs.User.Update)
 		users.DELETE("/:id", hs.User.Delete)
+		// 虚拟机资源授权分配（同 user:manage）
+		if hs.VMAccessH != nil {
+			users.GET("/:id/vm-access", hs.VMAccessH.Get)
+			users.PUT("/:id/vm-access", hs.VMAccessH.Set)
+		}
 
 		// 角色权限（user:manage，管理员）
 		roles := protected.Group("/roles", middleware.RequirePermission(domain.PERM_USER_MANAGE))
 		roles.GET("", hs.Role.List)
 		roles.GET("/permissions", hs.Role.Permissions)
+		roles.POST("", hs.Role.Create)
 		roles.PUT("/:id", hs.Role.Update)
 		roles.DELETE("/:id", hs.Role.Delete)
 
-		// Guacamole 远程桌面代理（vm:view）
+		// Guacamole 远程桌面代理（vm:console + 资源级授权）
 		if hs.Guac != nil {
-			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_VIEW), hs.Guac.Proxy)
+			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_CONSOLE), hs.Guac.Proxy)
 		} else {
-			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_VIEW), func(c *gin.Context) {
+			protected.GET("/guac/ws/:vmId", middleware.RequirePermission(domain.PERM_VM_CONSOLE), func(c *gin.Context) {
 				response.Error(c, http.StatusServiceUnavailable, response.CodeServerError, "Guacamole 未配置")
 			})
 		}

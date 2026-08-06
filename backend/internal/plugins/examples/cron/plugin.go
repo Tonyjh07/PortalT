@@ -182,12 +182,13 @@ func New() *Plugin { return &Plugin{s: newScheduler()} }
 // Info 插件元信息（菜单/权限同步用）。
 func (p *Plugin) Info() domain.Plugin {
 	return domain.Plugin{
-		ID:        "cron",
-		Name:      "定时任务",
-		Icon:      "mdi:calendar-clock",
-		Route:     "/cron",
-		SortOrder: 91,
-		IsActive:  true,
+		ID:         "cron",
+		Name:       "定时任务",
+		Icon:       "mdi:calendar-clock",
+		Route:      "/cron",
+		SortOrder:  91,
+		Permission: domain.PERM_PLUGIN_MANAGE,
+		IsActive:   true,
 	}
 }
 

@@ -46,9 +46,9 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	router := NewRouter(tm, &HandlerSet{
 		Auth:   v1.NewAuthHandler(authProvider, tm),
-		VM:     v1.NewVMHandler(services.NewVMService(vmRepo, provider)),
+		VM:     v1.NewVMHandler(services.NewVMService(vmRepo, provider), nil),
 		Menu:   v1.NewMenuHandler(plugins),
-		Plugin: v1.NewPluginHandler(plugins),
+		Plugin: v1.NewPluginHandler(plugins, nil),
 		Guac:   v1.NewGuacHandler(""),
 	})
 	return &testEnv{router: router, userRepo: userRepo, vmRepo: vmRepo, plugins: plugins, provider: provider, tm: tm}

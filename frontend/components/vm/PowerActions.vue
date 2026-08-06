@@ -5,12 +5,12 @@ import type { VM } from '~/types'
 const props = defineProps<{ vm: VM }>()
 const emit = defineEmits<{ changed: [] }>()
 
-const { user } = useAuth()
+const { hasPerm } = useAuth()
 const { api } = useApi()
 
-const canStart = computed(() => can(user.value, 'vm:start') && (props.vm.status === 'poweredOff' || props.vm.status === 'suspended'))
-const canStop = computed(() => can(user.value, 'vm:stop') && props.vm.status === 'poweredOn')
-const canRestart = computed(() => can(user.value, 'vm:restart') && props.vm.status === 'poweredOn')
+const canStart = computed(() => hasPerm('vm:start') && (props.vm.status === 'poweredOff' || props.vm.status === 'suspended'))
+const canStop = computed(() => hasPerm('vm:stop') && props.vm.status === 'poweredOn')
+const canRestart = computed(() => hasPerm('vm:restart') && props.vm.status === 'poweredOn')
 
 const VERBS: Record<string, { label: string; verb: string }> = {
   start: { label: '启动', verb: 'start' },

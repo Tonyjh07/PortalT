@@ -5,7 +5,7 @@ import type { VM } from '~/types'
 const props = defineProps<{ vm: VM }>()
 const emit = defineEmits<{ changed: []; open: []; close: [] }>()
 
-const { user } = useAuth()
+const { hasPerm } = useAuth()
 const { api } = useApi()
 
 const visible = ref(false)
@@ -89,7 +89,7 @@ async function save() {
 
 <template>
   <el-button
-    v-if="can(user, 'vm:manage')"
+    v-if="hasPerm('vm:manage')"
     size="small"
     plain
     :title="'配置远程访问参数（Guacamole / RustDesk）'"

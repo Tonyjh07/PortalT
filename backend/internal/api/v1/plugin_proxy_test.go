@@ -50,6 +50,7 @@ func TestPluginProxy_ForwardAndIdentity(t *testing.T) {
 	r, _ := setupProxy(t, plugin, func(w http.ResponseWriter, req *http.Request) {
 		seen["user"] = req.Header.Get("X-PortalT-User")
 		seen["role"] = req.Header.Get("X-PortalT-Role")
+		seen["perms"] = req.Header.Get("X-PortalT-Perms")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"hello":"world"}`))
 	})
@@ -59,8 +60,43 @@ func TestPluginProxy_ForwardAndIdentity(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "alice", seen["user"])
 	assert.Equal(t, "admin", seen["role"])
+	// X-PortalT-Perms：admin 内置表权限集合的 JSON（排序确定）
+	var got []string
+	require.NoError(t, json.Unmarshal([]byte(seen["perms"]), &got))
+	assert.Contains(t, got, "vm:manage")
 	assert.Equal(t, `{"hello":"world"}`, w.Body.String())
 	assert.Equal(t, "application/json", w.Header().Get("Content-Type"))
+}
+
+func TestPluginProxy_HeaderPerms_UsesRuntimeSet(t *testing.T) {
+	// 装载角色矩阵时，X-PortalT-Perms 取矩阵内容（单一事实来源）
+	seen := make(chan string, 1)
+	plugin := &domain.Plugin{
+		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeProxy, IsActive: true,
+		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
+	}
+	repo := memory.NewPluginRepository()
+	require.NoError(t, repo.Save(plugin))
+	h := NewPluginProxyHandler(repo)
+	user := &domain.User{ID: "u1", Username: "alice", Role: domain.RoleAdmin}
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("auth.user", user)
+		c.Set("auth.perms", map[string]struct{}{"vm:view": {}, "vm:console": {}})
+		c.Next()
+	})
+	r.Any("/proxy/:pluginId/*path", h.Proxy)
+
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		seen <- req.Header.Get("X-PortalT-Perms")
+	}))
+	defer up.Close()
+	plugin.ApiURL = up.URL
+
+	w := proxyDo(t, r, http.MethodGet, "/proxy/p1/api/info")
+	assert.Equal(t, http.StatusOK, w.Code)
+	perms := <-seen
+	assert.Equal(t, `["vm:console","vm:view"]`, perms)
 }
 
 func TestPluginProxy_EndpointWhitelist(t *testing.T) {

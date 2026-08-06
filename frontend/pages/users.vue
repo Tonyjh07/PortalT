@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import type { Role, User } from '~/types'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import type { Role, RoleDefinition, User, VM } from '~/types'
 
 definePageMeta({ middleware: 'auth' })
 
@@ -8,16 +9,25 @@ const { user: currentUser } = useAuth()
 
 const loading = ref(false)
 const users = ref<User[]>([])
+const roles = ref<RoleDefinition[]>([])
 const dialogVisible = ref(false)
 const editing = ref<User | null>(null)
 const form = reactive({ username: '', password: '', email: '', role: 'user' as Role })
 
-const roleLabels: Record<Role, string> = { admin: '管理员', user: '普通用户', viewer: '访客' }
+const roleLabels = computed<Record<string, string>>(() => {
+  const labels: Record<string, string> = { admin: '管理员', user: '普通用户', viewer: '访客' }
+  for (const r of roles.value) {
+    if (!labels[r.id]) labels[r.id] = r.name
+  }
+  return labels
+})
 
 async function load() {
   loading.value = true
   try {
-    users.value = await api<User[]>('/users')
+    const [us, rs] = await Promise.all([api<User[]>('/users'), api<RoleDefinition[]>('/roles')])
+    users.value = us
+    roles.value = rs
   } finally {
     loading.value = false
   }
@@ -43,19 +53,73 @@ async function save() {
   } else if (form.password) {
     payload.password = form.password
   }
-  if (!editing.value) {
-    await api('/users', { method: 'POST', body: payload })
-  } else {
-    await api(`/users/${editing.value.id}`, { method: 'PUT', body: payload })
+  try {
+    if (!editing.value) {
+      await api('/users', { method: 'POST', body: payload })
+    } else {
+      await api(`/users/${editing.value.id}`, { method: 'PUT', body: payload })
+    }
+    ElMessage.success(editing.value ? '用户已更新' : '用户已创建')
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || '保存失败')
+    return
   }
   dialogVisible.value = false
   await load()
 }
 
 async function remove(row: User) {
-  await ElMessageBox.confirm(`确定删除用户「${row.username}」？`, '删除确认', { type: 'warning' })
-  await api(`/users/${row.id}`, { method: 'DELETE' })
-  await load()
+  try {
+    await ElMessageBox.confirm(`确定删除用户「${row.username}」？`, '删除确认', { type: 'warning' })
+    await api(`/users/${row.id}`, { method: 'DELETE' })
+    await load()
+  } catch {
+    /* 取消或失败 */
+  }
+}
+
+// ---- 虚拟机资源授权分配 ----
+const accessDialogVisible = ref(false)
+const accessUser = ref<User | null>(null)
+const accessVms = ref<VM[]>([])
+const accessLoading = ref(false)
+const accessSelected = ref<string[]>([])
+const accessSaving = ref(false)
+
+async function openAccess(row: User) {
+  accessUser.value = row
+  accessDialogVisible.value = true
+  accessLoading.value = true
+  accessSelected.value = []
+  try {
+    const [vms, granted] = await Promise.all([
+      api<VM[]>('/vms'),
+      api<{ vm_ids: string[] }>(`/users/${row.id}/vm-access`),
+    ])
+    accessVms.value = vms
+    accessSelected.value = granted.vm_ids
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || '查询虚拟机授权失败')
+  } finally {
+    accessLoading.value = false
+  }
+}
+
+async function saveAccess() {
+  if (!accessUser.value) return
+  accessSaving.value = true
+  try {
+    await api(`/users/${accessUser.value.id}/vm-access`, {
+      method: 'PUT',
+      body: { vm_ids: accessSelected.value },
+    })
+    ElMessage.success('虚拟机授权已更新')
+    accessDialogVisible.value = false
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || '更新授权失败')
+  } finally {
+    accessSaving.value = false
+  }
 }
 
 onMounted(load)
@@ -66,7 +130,7 @@ onMounted(load)
     <div class="page-head">
       <div>
         <h2>用户管理</h2>
-        <p class="page-sub">管理门户账号与角色分配（user:manage）</p>
+        <p class="page-sub">管理门户账号、角色分配与虚拟机资源授权（user:manage）</p>
       </div>
       <el-button type="primary" @click="openCreate">新建用户</el-button>
     </div>
@@ -75,16 +139,17 @@ onMounted(load)
       <el-table :data="users" v-loading="loading" stripe>
         <el-table-column prop="username" label="用户名" min-width="140" />
         <el-table-column prop="email" label="邮箱" min-width="180" />
-        <el-table-column label="角色" width="120">
+        <el-table-column label="角色" width="130">
           <template #default="{ row }">
             <el-tag :type="row.role === 'admin' ? 'danger' : row.role === 'user' ? 'primary' : 'info'">
-              {{ roleLabels[row.role as Role] }}
+              {{ roleLabels[row.role] || row.role }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="openAccess(row)">资源授权</el-button>
             <el-button link type="danger" :disabled="row.id === currentUser?.id" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -113,5 +178,43 @@ onMounted(load)
         <el-button type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="accessDialogVisible"
+      :title="`虚拟机资源授权：${accessUser?.username ?? ''}`"
+      width="520px"
+      destroy-on-close
+    >
+      <p class="page-sub" style="margin-bottom: 12px">
+        勾选该用户可见/可操作的虚拟机；持有 vm:manage 权限的用户不受此限制（全量可见）。
+      </p>
+      <el-checkbox-group v-model="accessSelected" v-loading="accessLoading" class="access-list">
+        <el-checkbox v-for="vm in accessVms" :key="vm.id" :label="vm.id">
+          {{ vm.name }}
+          <span class="perm-desc">{{ vm.status }}</span>
+        </el-checkbox>
+      </el-checkbox-group>
+      <el-empty v-if="!accessLoading && accessVms.length === 0" description="暂无虚拟机" :image-size="60" />
+      <template #footer>
+        <el-button @click="accessDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="accessSaving" @click="saveAccess">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.access-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.perm-desc {
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+</style>

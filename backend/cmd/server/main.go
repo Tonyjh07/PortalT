@@ -83,6 +83,16 @@ func main() {
 	roleLoader := middleware.NewRoleLoader(roleRepo)
 	log.Printf("角色权限矩阵已就绪")
 
+	// 权限字典引导（permissions 表；供角色编辑/插件声明校验）
+	permRepo := gormstore.NewPermissionRepository(db)
+	if err := services.EnsureDefaultPermissions(ctx, permRepo); err != nil {
+		log.Fatalf("权限字典引导失败: %v", err)
+	}
+	log.Printf("权限字典已就绪")
+
+	// 虚拟机资源级授权仓储
+	vmAccessRepo := gormstore.NewVMAccessRepository(db)
+
 	// 原生插件注册表（启动时注册完毕；同步到 plugins 表供菜单与权限管理）
 	native := plugins.NewRegistry()
 	for _, p := range builtinPlugins() {
@@ -117,15 +127,16 @@ func main() {
 
 	// 路由
 	api.AppVersion = AppVersion
-	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM)
+	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM, vmAccessRepo)
 	router := api.NewRouter(tm, &api.HandlerSet{
 		Auth:        v1.NewAuthHandler(authProvider, tm),
-		VM:          v1.NewVMHandler(vmService),
+		VM:          v1.NewVMHandler(vmService, vmAccessRepo),
 		Menu:        v1.NewMenuHandler(pluginRepo),
-		Plugin:      v1.NewPluginHandler(pluginRepo),
+		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo),
 		PluginProxy: v1.NewPluginProxyHandler(pluginRepo),
-		User:        v1.NewUserHandler(userRepo),
-		Role:        v1.NewRoleHandler(roleRepo, roleLoader),
+		User:        v1.NewUserHandler(userRepo, roleRepo, vmAccessRepo),
+		Role:        v1.NewRoleHandler(roleRepo, permRepo, roleLoader),
+		VMAccessH:   v1.NewVMAccessHandler(vmAccessRepo),
 		Guac:        guacHandler,
 		Native:      native,
 		NativeDeps: plugins.Deps{
@@ -133,6 +144,7 @@ func main() {
 			WebURL:   envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
 		},
 		PluginRepo:  pluginRepo,
+		Permissions: permRepo,
 	})
 
 	srv := &http.Server{

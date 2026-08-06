@@ -16,11 +16,14 @@ import (
 // UserHandler 用户管理接口处理器（user:manage，管理员）。
 type UserHandler struct {
 	users ports.UserRepository
+	roles ports.RoleRepository
+	vms   ports.VMAccessRepository
 }
 
 // NewUserHandler 创建用户管理处理器。
-func NewUserHandler(users ports.UserRepository) *UserHandler {
-	return &UserHandler{users: users}
+// vms 可为 nil（未装配资源授权时跳过清理）。
+func NewUserHandler(users ports.UserRepository, roles ports.RoleRepository, vms ports.VMAccessRepository) *UserHandler {
+	return &UserHandler{users: users, roles: roles, vms: vms}
 }
 
 // userCreateRequest 创建用户请求体。
@@ -57,7 +60,7 @@ func (h *UserHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "请求参数错误", err.Error())
 		return
 	}
-	role, err := normalizeRole(req.Role)
+	role, err := h.normalizeRole(req.Role)
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 		return
@@ -109,7 +112,7 @@ func (h *UserHandler) Update(c *gin.Context) {
 		return
 	}
 	if req.Role != "" {
-		role, err := normalizeRole(req.Role)
+		role, err := h.normalizeRole(req.Role)
 		if err != nil {
 			response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
 			return
@@ -151,17 +154,26 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "删除用户失败")
 		return
 	}
+	if h.vms != nil {
+		if err := h.vms.DeleteForUser(id); err != nil {
+			response.Error(c, http.StatusInternalServerError, response.CodeServerError, "删除用户资源授权失败")
+			return
+		}
+	}
 	response.OK(c, nil)
 }
 
-// normalizeRole 校验并归一化角色值（空 → 默认 user）。
-func normalizeRole(role string) (domain.Role, error) {
-	switch domain.Role(role) {
-	case "", domain.RoleUser:
+// normalizeRole 校验角色值：空 → 默认 user；否则必须存在于角色表
+// （支持自定义角色，角色表不存在时返回错误）。
+func (h *UserHandler) normalizeRole(role string) (domain.Role, error) {
+	if role == "" {
 		return domain.RoleUser, nil
-	case domain.RoleAdmin, domain.RoleViewer:
-		return domain.Role(role), nil
-	default:
-		return "", errors.New("无效的角色值（可选 admin/user/viewer）")
 	}
+	if _, err := h.roles.FindByID(role); err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			return "", errors.New("无效的角色值: " + role + "（角色不存在，见 GET /api/v1/roles）")
+		}
+		return "", errors.New("查询角色失败")
+	}
+	return domain.Role(role), nil
 }

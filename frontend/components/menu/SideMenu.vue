@@ -1,15 +1,13 @@
 <script setup lang="ts">
-import { can } from '~/utils/permissions'
-
 defineProps<{ collapsed: boolean }>()
 
 const route = useRoute()
 const { items } = useMenu()
-const { user } = useAuth()
+const { user, hasPerm } = useAuth()
 
 const canManage = computed(() => {
   const u = user.value
-  return u?.role === 'admin' || can(u, 'user:manage')
+  return u?.role === 'admin' || hasPerm('user:manage')
 })
 </script>
 

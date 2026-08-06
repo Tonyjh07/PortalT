@@ -102,3 +102,45 @@ func TestSyncNativePlugins_DefaultSortOrder(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 100, repo.byID["x"].SortOrder)
 }
+
+func TestSyncNativePlugins_DeclaredPermissionAsDefault(t *testing.T) {
+	reg := plugins.NewRegistry()
+	require.NoError(t, reg.Register(nativeStub{info: domain.Plugin{
+		ID: "esxi-admin", Name: "ESXi 管理", Route: "/esxi-admin",
+		Permission: domain.PERM_PLUGIN_VIEW,
+	}}))
+
+	// 新插件：声明权限直接入库
+	repo := &pluginStubRepo{byID: map[string]*domain.Plugin{}}
+	_, err := SyncNativePlugins(context.Background(), repo, reg)
+	require.NoError(t, err)
+	assert.Equal(t, domain.PERM_PLUGIN_VIEW, repo.byID["esxi-admin"].Permission)
+
+	// 已有记录权限为空 → 回填声明值（默认值语义）
+	repo2 := &pluginStubRepo{byID: map[string]*domain.Plugin{
+		"esxi-admin": {ID: "esxi-admin", Type: domain.PluginTypeNative, Permission: ""},
+	}}
+	_, err = SyncNativePlugins(context.Background(), repo2, reg)
+	require.NoError(t, err)
+	assert.Equal(t, domain.PERM_PLUGIN_VIEW, repo2.byID["esxi-admin"].Permission)
+
+	// 管理员已配置（非空）→ 不覆盖
+	repo3 := &pluginStubRepo{byID: map[string]*domain.Plugin{
+		"esxi-admin": {ID: "esxi-admin", Type: domain.PluginTypeNative, Permission: "vm:view"},
+	}}
+	_, err = SyncNativePlugins(context.Background(), repo3, reg)
+	require.NoError(t, err)
+	assert.Equal(t, "vm:view", repo3.byID["esxi-admin"].Permission)
+
+	// 管理员故意留空 → 保留空（空权限 = 仅插件级开关控制）
+	repo4 := &pluginStubRepo{byID: map[string]*domain.Plugin{
+		"esxi-admin": {ID: "esxi-admin", Type: domain.PluginTypeNative, Permission: ""},
+	}}
+	reg4 := plugins.NewRegistry()
+	require.NoError(t, reg4.Register(nativeStub{info: domain.Plugin{
+		ID: "esxi-admin", Name: "ESXi 管理", Route: "/esxi-admin", Permission: "",
+	}}))
+	_, err = SyncNativePlugins(context.Background(), repo4, reg4)
+	require.NoError(t, err)
+	assert.Equal(t, "", repo4.byID["esxi-admin"].Permission)
+}

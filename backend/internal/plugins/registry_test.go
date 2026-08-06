@@ -100,6 +100,62 @@ func TestRegistry_MountAPI_Gate(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+func TestRegistry_MountAPI_DeclaredPermission_Enforced(t *testing.T) {
+	// 插件声明最小权限后，API 强制校验：无权限用户 403，有权限放行
+	gin.SetMode(gin.TestMode)
+	reg := NewRegistry()
+	require.NoError(t, reg.Register(stubPlugin{id: "demo"}))
+	repo := &stubRepo{byID: map[string]*domain.Plugin{
+		"demo": {ID: "demo", IsActive: true, Permission: "vm:view"},
+	}}
+	user := &domain.User{ID: "u", Username: "u", Role: domain.RoleUser}
+
+	// 未加载权限集合 → 回退内置表：user 有 vm:view → 200
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set("auth.user", user)
+		c.Next()
+	})
+	reg.MountAPI(r.Group("/native"), Deps{}, repo)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/native/demo/ping", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 运行时权限集合（角色矩阵）缺少声明权限 → 403（矩阵优先于内置表）
+	r2 := gin.New()
+	r2.Use(func(c *gin.Context) {
+		c.Set("auth.user", user)
+		c.Set("auth.perms", map[string]struct{}{"vm:console": {}})
+		c.Next()
+	})
+	reg.MountAPI(r2.Group("/native"), Deps{}, repo)
+	w = httptest.NewRecorder()
+	r2.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/native/demo/ping", nil))
+	assert.Equal(t, http.StatusForbidden, w.Code)
+
+	// 集合包含声明权限 → 放行
+	r3 := gin.New()
+	r3.Use(func(c *gin.Context) {
+		c.Set("auth.user", user)
+		c.Set("auth.perms", map[string]struct{}{"vm:view": {}})
+		c.Next()
+	})
+	reg.MountAPI(r3.Group("/native"), Deps{}, repo)
+	w = httptest.NewRecorder()
+	r3.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/native/demo/ping", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// 未声明权限的插件不受影响（无权限集合也无内置权限）
+	r4 := gin.New()
+	repo4 := &stubRepo{byID: map[string]*domain.Plugin{
+		"demo": {ID: "demo", IsActive: true},
+	}}
+	reg.MountAPI(r4.Group("/native"), Deps{}, repo4)
+	w = httptest.NewRecorder()
+	r4.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/native/demo/ping", nil))
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
 func TestRegistry_MountStatic(t *testing.T) {
 	reg := NewRegistry()
 	require.NoError(t, reg.Register(stubPlugin{id: "demo"}))

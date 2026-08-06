@@ -18,6 +18,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"portalt/internal/api/response"
 	"portalt/internal/domain"
 )
 
@@ -126,14 +127,44 @@ type PluginRepo interface {
 }
 
 // nativeGate 原生插件 API 的启用闸门中间件。
+// 除启用状态外，强制校验插件声明的最小权限（Info().Permission）：
+// 插件声明的权限是硬约束（管理员调整角色矩阵也会受此约束），
+// 防止通过挂载路由绕过界面上的权限配置。
 func nativeGate(repo PluginRepo, id string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		p, err := repo.FindByID(id)
 		if err != nil || !p.IsEnabled() {
-			c.JSON(http.StatusNotFound, gin.H{"code": 4004, "message": "插件不存在或未启用"})
+			response.Error(c, http.StatusNotFound, response.CodeNotFound, "插件不存在或未启用")
+			c.Abort()
+			return
+		}
+		if p.Permission != "" && !hasPerm(c, p.Permission) {
+			response.Error(c, http.StatusForbidden, response.CodeForbidden, "权限不足")
 			c.Abort()
 			return
 		}
 		c.Next()
 	}
+}
+
+// hasPerm 判断当前用户是否具备指定权限：优先使用中间件写入的运行时
+// 权限集合（角色矩阵），未加载时回退内置角色表。
+// 注意：不 import api/middleware（会与 domain/services → plugins 形成
+// 测试循环依赖），context key 约定与 middleware 一致（"auth.user"/"auth.perms"）。
+func hasPerm(c *gin.Context, perm string) bool {
+	userVal, ok := c.Get("auth.user")
+	if !ok {
+		return false
+	}
+	user, ok := userVal.(*domain.User)
+	if !ok || user == nil {
+		return false
+	}
+	if permsVal, ok := c.Get("auth.perms"); ok {
+		if set, ok := permsVal.(map[string]struct{}); ok {
+			_, found := set[perm]
+			return found
+		}
+	}
+	return user.HasPermission(perm)
 }

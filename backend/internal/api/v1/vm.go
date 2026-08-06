@@ -12,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"portalt/internal/api/middleware"
 	"portalt/internal/api/response"
 	"portalt/internal/domain"
 	"portalt/internal/domain/services"
@@ -20,6 +21,8 @@ import (
 
 // metadataSensitiveRe 匹配 metadata 中的敏感键（密码/令牌），
 // 列表与详情接口返回时移除，避免低权限角色（vm:view）获取远程桌面凭证。
+// rustdesk.key 为自建服务器公钥（非秘密），不在剔除之列；
+// rustdesk.password 等已由 password 模式覆盖。
 var metadataSensitiveRe = regexp.MustCompile(`(?i)password|passwd|secret|token`)
 
 // sanitizeVM 返回 VM 的脱敏副本：metadata 中键名匹配敏感模式的项被移除。
@@ -79,21 +82,36 @@ func fmtPort(v any) string {
 
 // VMHandler 虚拟机管理接口处理器。
 type VMHandler struct {
-	svc *services.VMService
+	svc    *services.VMService
+	access ports.VMAccessRepository
 }
 
 // NewVMHandler 创建虚拟机处理器。
-func NewVMHandler(svc *services.VMService) *VMHandler {
-	return &VMHandler{svc: svc}
+// access 为 nil 时跳过资源级授权（仅依赖权限中间件）。
+func NewVMHandler(svc *services.VMService, access ports.VMAccessRepository) *VMHandler {
+	return &VMHandler{svc: svc, access: access}
 }
 
 // List GET /api/v1/vms
-// 返回全部虚拟机（按名称排序，仓储层保证）。
+// 返回虚拟机列表（按名称排序，仓储层保证）；
+// 非 vm:manage 用户仅返回 vm_access 授权的 VM。
 func (h *VMHandler) List(c *gin.Context) {
 	vms, err := h.svc.ListVMs(c.Request.Context())
 	if err != nil {
 		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询虚拟机失败")
 		return
+	}
+	if ids, all := h.visibleVMIDs(c); !all {
+		if ids == nil {
+			return
+		}
+		filtered := make([]*domain.VM, 0, len(vms))
+		for _, vm := range vms {
+			if _, ok := ids[vm.ID]; ok {
+				filtered = append(filtered, vm)
+			}
+		}
+		vms = filtered
 	}
 	if vms == nil {
 		vms = []*domain.VM{}
@@ -108,6 +126,9 @@ func (h *VMHandler) List(c *gin.Context) {
 // Get GET /api/v1/vms/:id
 // 返回单个虚拟机详情（metadata 敏感键已脱敏）。
 func (h *VMHandler) Get(c *gin.Context) {
+	if !authorizeVM(c, h.access, c.Param("id")) {
+		return
+	}
 	vm, ok := h.findVM(c)
 	if !ok {
 		return
@@ -133,6 +154,9 @@ func (h *VMHandler) Restart(c *gin.Context) {
 // Status GET /api/v1/vms/:id/status
 // 返回虚拟机实时状态（轮询用，从提供者回刷）。
 func (h *VMHandler) Status(c *gin.Context) {
+	if !authorizeVM(c, h.access, c.Param("id")) {
+		return
+	}
 	vm, err := h.svc.GetVMStatus(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
@@ -153,6 +177,9 @@ func (h *VMHandler) Status(c *gin.Context) {
 // 合并更新虚拟机 metadata（如远程桌面参数 guac.*），需 vm:manage 权限。
 // body 为键值对象；值为 null 的键删除。返回的 VM 已脱敏（密码只写不回）。
 func (h *VMHandler) UpdateMetadata(c *gin.Context) {
+	if !authorizeVM(c, h.access, c.Param("id")) {
+		return
+	}
 	var patch map[string]any
 	if err := c.ShouldBindJSON(&patch); err != nil {
 		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "请求体必须是 JSON 对象")
@@ -174,8 +201,11 @@ func (h *VMHandler) UpdateMetadata(c *gin.Context) {
 	response.OK(c, sanitizeVM(vm))
 }
 
-// powerOp 电源操作统一处理：校验错误映射 + 成功返回最新状态。
+// powerOp 电源操作统一处理：资源授权校验 + 错误映射 + 成功返回最新状态。
 func (h *VMHandler) powerOp(c *gin.Context, verb string, fn func(ctx context.Context, id string) (*domain.VM, error)) {
+	if !authorizeVM(c, h.access, c.Param("id")) {
+		return
+	}
 	vm, err := fn(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		switch {
@@ -202,4 +232,61 @@ func (h *VMHandler) findVM(c *gin.Context) (*domain.VM, bool) {
 		return nil, false
 	}
 	return vm, true
+}
+
+// authorizeVM 资源级授权：用户具备 vm:manage 时放行全部，
+// 否则要求 vm_access 表中存在该用户对目标 VM 的授权。
+// access 为 nil（未配置授权表）时直接放行；未授权按 404 处理（防枚举）。
+// 返回 false 时响应已写入。VM 详情/电源/远程桌面等资源端点共用。
+func authorizeVM(c *gin.Context, access ports.VMAccessRepository, vmID string) bool {
+	if access == nil {
+		return true
+	}
+	user := middleware.CurrentUser(c)
+	if user == nil {
+		response.Error(c, http.StatusUnauthorized, response.CodeInvalidToken, "令牌无效或已过期")
+		return false
+	}
+	if hasFullVM(c) {
+		return true
+	}
+	ok, err := access.IsAuthorized(user.ID, vmID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询虚拟机授权失败")
+		return false
+	}
+	if !ok {
+		response.Error(c, http.StatusNotFound, response.CodeNotFound, "虚拟机不存在")
+		return false
+	}
+	return true
+}
+
+// hasFullVM 判断当前用户是否持有 vm:manage（资源级放行全部）。
+func hasFullVM(c *gin.Context) bool {
+	_, ok := middleware.CurrentPerms(c)[domain.PERM_VM_MANAGE]
+	return ok
+}
+
+// visibleVMIDs 返回当前用户可见的 VM ID 集合（vm:manage 时为 nil 表示全部可见）。
+// all=false 且 ids==nil 时表示内部错误，响应已写入。
+func (h *VMHandler) visibleVMIDs(c *gin.Context) (map[string]struct{}, bool) {
+	if h.access == nil || hasFullVM(c) {
+		return nil, true
+	}
+	user := middleware.CurrentUser(c)
+	if user == nil {
+		response.Error(c, http.StatusUnauthorized, response.CodeInvalidToken, "令牌无效或已过期")
+		return nil, false
+	}
+	ids, err := h.access.VisibleVMIDs(user.ID)
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询虚拟机授权失败")
+		return nil, false
+	}
+	set := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		set[id] = struct{}{}
+	}
+	return set, false
 }

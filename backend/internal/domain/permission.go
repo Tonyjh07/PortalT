@@ -16,6 +16,8 @@ const (
 	PERM_VM_RESTART = "vm:restart"
 	// PERM_VM_MANAGE 管理虚拟机（增删改）
 	PERM_VM_MANAGE = "vm:manage"
+	// PERM_VM_CONSOLE 访问虚拟机远程桌面与控制台（与 vm:view 分离，可单独授予）
+	PERM_VM_CONSOLE = "vm:console"
 	// PERM_PLUGIN_VIEW 查看插件菜单
 	PERM_PLUGIN_VIEW = "plugin:view"
 	// PERM_PLUGIN_MANAGE 管理插件（增删改）

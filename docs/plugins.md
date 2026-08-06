@@ -29,7 +29,7 @@ backend/internal/plugins/examples/<name>/
 
 ```go
 type Plugin interface {
-    Info() domain.Plugin              // 元信息：ID/Name/Icon/Route/SortOrder/IsActive
+    Info() domain.Plugin              // 元信息：ID/Name/Icon/Route/SortOrder/Permission/IsActive
     Mount(rt *gin.RouterGroup, deps Deps) // 注册 API（rt 已带鉴权与启用闸门）
     StaticFS() fs.FS                  // 内嵌静态前端（fs.Sub 风格），无前端返回 nil
 }
@@ -45,6 +45,23 @@ type Plugin interface {
   在单个路由上加 `middleware.RequirePermission(domain.PERM_XXX)`
 - API 响应一律用统一信封：`response.OK(c, data)` / `response.Error(c, httpStatus, code, msg)`，
   错误码见 `docs/interfaces.md`（常用：`CodeNotFound` 4006、`CodeInvalidOperation` 4007、`CodeBadRequest` 4004）
+
+### 权限声明（Permission 字段）
+
+`Info()` 中的 `Permission` 声明插件的**最小访问权限**，语义：
+
+- **作默认值**：启动同步时仅当 plugins 表记录权限为空才回填；管理员在界面配置过
+  （含故意留空）一律不覆盖，管理员调整优先
+- **硬约束**：`nativeGate` 对声明了权限的插件强制校验——当前用户（角色矩阵，
+  未加载时回退内置表）不具备该权限 → 403。即使管理员把角色矩阵改成不包含
+  该权限（界面行为），挂载路由也不会放行，防止权限配置与代码声明脱节
+- **运行时单一事实来源**：矩阵缺权限时，用户内置角色表即使有也不放行（与
+  `RequirePermission` 中间件一致）
+- 声明值必须存在于权限字典（`GET /api/v1/roles/permissions`）；`proxy` 插件创建/更新
+  时同样校验（管理 API 层）
+
+示例：`esxiadmin` 声明 `plugin:view`（只读配置）；`cron` 含任务调度写操作，
+声明 `plugin:manage`（仅管理员角色矩阵含该权限）。
 
 ## 原生插件：依赖注入 Deps
 
@@ -65,8 +82,9 @@ type Deps struct {
 1. `backend/cmd/server/main.go` 的 `builtinPlugins()` 追加 `xxx.New()`
 2. 启动时 `Registry.Register` 校验 ID 冲突，随后 `services.SyncNativePlugins` 按 `Info()`
    对 plugins 表做 upsert：
-   - 新插件：插入记录（`type=native`）
-   - 已存在：只更新技术字段（类型/名称/图标/路由），**保留管理员在界面设置的权限与启用状态**
+   - 新插件：插入记录（`type=native`，声明权限直接入库）
+   - 已存在：只更新技术字段（类型/名称/图标/路由），**保留管理员在界面设置的权限与启用状态**；
+     权限为空时以声明值回填（默认值语义）
 3. 因此 `native` 类型不能通过管理 API 创建，也**不建议删除**（重启后会被代码重新 upsert）
 
 ## 原生插件：静态前端约定

@@ -16,7 +16,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/wwt/guac"
 
-	"portalt/internal/api/middleware"
 	"portalt/internal/api/response"
 	"portalt/internal/domain"
 	"portalt/internal/ports"
@@ -34,11 +33,13 @@ type GuacdHandler struct {
 	guacdURL string
 	// getVM 按 ID 获取虚拟机（用于读取 metadata 连接参数）
 	getVM func(ctx context.Context, id string) (*domain.VM, error)
+	// access 虚拟机资源授权表（nil 时仅依赖权限中间件）
+	access ports.VMAccessRepository
 }
 
 // NewGuacdHandler 创建 guacd 原生隧道处理器。
-func NewGuacdHandler(guacdURL string, getVM func(ctx context.Context, id string) (*domain.VM, error)) *GuacdHandler {
-	return &GuacdHandler{guacdURL: guacdURL, getVM: getVM}
+func NewGuacdHandler(guacdURL string, getVM func(ctx context.Context, id string) (*domain.VM, error), access ports.VMAccessRepository) *GuacdHandler {
+	return &GuacdHandler{guacdURL: guacdURL, getVM: getVM, access: access}
 }
 
 // GuacProxy Guacamole 隧道代理处理器接口（兼容 Web 应用代理与 guacd 原生隧道）。
@@ -50,9 +51,11 @@ type GuacProxy interface {
 //   - GUACD_URL 已配置 → guacd 原生隧道（Phase 8，推荐，浏览器直连 guacd）；
 //   - GUAC_URL 已配置 → 转发 Guacamole Web 应用 WebSocket 隧道（旧模式）；
 //   - 均未配置 → 返回 nil（路由层返回 503）。
-func GuacHandlerForEnv(getVM func(ctx context.Context, id string) (*domain.VM, error)) GuacProxy {
+//
+// access 为虚拟机资源授权表（nil 时仅做权限中间件校验，无资源级校验）。
+func GuacHandlerForEnv(getVM func(ctx context.Context, id string) (*domain.VM, error), access ports.VMAccessRepository) GuacProxy {
 	if d := os.Getenv("GUACD_URL"); d != "" {
-		return NewGuacdHandler(d, getVM)
+		return NewGuacdHandler(d, getVM, access)
 	}
 	if w := GuacURLFromEnv(); w != "" {
 		return NewGuacHandler(w)
@@ -74,12 +77,12 @@ var internalOpcodePrefix = []byte("0.")
 // Proxy GET /api/v1/guac/ws/:vmId（guacd 模式）
 // 浏览器打开 WS 后由本处理器代发握手，随后双向透传指令流。
 func (h *GuacdHandler) Proxy(c *gin.Context) {
-	user := middleware.CurrentUser(c)
-	if user == nil {
-		response.Error(c, http.StatusUnauthorized, response.CodeInvalidToken, "令牌无效或已过期")
+	vmID := c.Param("vmId")
+	// 资源级授权（vm:console 由路由中间件校验；此处校验 vm_access 表），
+	// 未授权按不存在处理（防枚举），与 VM 详情/电源端点共用同一语义。
+	if !authorizeVM(c, h.access, vmID) {
 		return
 	}
-	vmID := c.Param("vmId")
 	vm, err := h.getVM(c.Request.Context(), vmID)
 	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {

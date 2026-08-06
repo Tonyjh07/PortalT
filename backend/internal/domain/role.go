@@ -66,6 +66,7 @@ var permissionDescriptions = map[string]string{
 	PERM_VM_STOP:       "停止虚拟机",
 	PERM_VM_RESTART:    "重启虚拟机",
 	PERM_VM_MANAGE:     "管理虚拟机（增删改）",
+	PERM_VM_CONSOLE:    "访问虚拟机远程桌面与控制台",
 	PERM_PLUGIN_VIEW:   "查看插件菜单并调用插件接口",
 	PERM_PLUGIN_MANAGE: "管理插件（增删改与启用停用）",
 	PERM_USER_MANAGE:   "管理用户与角色权限",

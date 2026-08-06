@@ -3,7 +3,7 @@ import type { Plugin, VM, VMStatus } from '~/types'
 
 definePageMeta({ middleware: 'auth' })
 
-const { user } = useAuth()
+const { hasPerm } = useAuth()
 const { load, items } = useMenu()
 
 const vms = ref<VM[]>([])
@@ -44,7 +44,7 @@ onMounted(async () => {
   }
   quickLinks.value = items.value
     .flatMap((item) => (item.children?.length ? item.children : [item]))
-    .filter((p) => !p.permission || can(user.value, p.permission))
+    .filter((p) => !p.permission || hasPerm(p.permission))
     .slice(0, 6)
 })
 </script>

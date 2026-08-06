@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ElMessage } from 'element-plus'
 import type { PermissionInfo, RoleDefinition } from '~/types'
 
 definePageMeta({ middleware: 'auth' })
@@ -32,9 +33,12 @@ async function save(role: RoleDefinition) {
   saving.value = true
   try {
     await api(`/roles/${role.id}`, { method: 'PUT', body: e })
+    ElMessage.success('角色已保存')
     role.name = e.name
     role.description = e.description
     role.permissions = [...e.permissions]
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || '保存失败')
   } finally {
     saving.value = false
   }
@@ -46,6 +50,30 @@ async function remove(role: RoleDefinition) {
   await load()
 }
 
+// ---- 新建角色 ----
+const createVisible = ref(false)
+const creating = ref(false)
+const createForm = reactive({ id: '', name: '', description: '', permissions: [] as string[] })
+
+function openCreate() {
+  Object.assign(createForm, { id: '', name: '', description: '', permissions: [] })
+  createVisible.value = true
+}
+
+async function createRole() {
+  creating.value = true
+  try {
+    await api('/roles', { method: 'POST', body: createForm })
+    ElMessage.success('角色已创建')
+    createVisible.value = false
+    await load()
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || '创建失败')
+  } finally {
+    creating.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -54,8 +82,9 @@ onMounted(load)
     <div class="page-head">
       <div>
         <h2>角色权限</h2>
-        <p class="page-sub">配置各角色可用的权限矩阵（保存后立即生效）</p>
+        <p class="page-sub">配置各角色可用的权限矩阵（保存后立即生效）；插件声明的权限在 API 层强制校验</p>
       </div>
+      <el-button type="primary" @click="openCreate">新建角色</el-button>
     </div>
 
     <div v-loading="loading" class="role-grid">
@@ -90,6 +119,37 @@ onMounted(load)
         </template>
       </el-card>
     </div>
+
+    <el-dialog v-model="createVisible" title="新建角色" width="480px">
+      <el-form label-width="80px">
+        <el-form-item label="角色 ID">
+          <el-input v-model="createForm.id" placeholder="小写字母/数字/下划线/连字符（如 ops）" />
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="createForm.name" placeholder="如：运维" />
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="createForm.description" placeholder="可选" />
+        </el-form-item>
+        <el-form-item label="权限">
+          <div class="perm-list create-perms">
+            <el-checkbox
+              v-for="p in permissions"
+              :key="p.id"
+              v-model="createForm.permissions"
+              :label="p.id"
+            >
+              {{ p.id }}
+              <span class="perm-desc">{{ p.description }}</span>
+            </el-checkbox>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createVisible = false">取消</el-button>
+        <el-button type="primary" :loading="creating" @click="createRole">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -126,6 +186,12 @@ onMounted(load)
   flex-direction: column;
   gap: 4px;
   min-height: 220px;
+}
+
+.create-perms {
+  min-height: 120px;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .perm-desc {

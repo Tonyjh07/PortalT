@@ -5,7 +5,7 @@ import { can } from '~/utils/permissions'
 definePageMeta({ middleware: 'auth' })
 
 const { api } = useApi()
-const { user } = useAuth()
+const { user, hasPerm } = useAuth()
 
 const loading = ref(false)
 const plugins = ref<Plugin[]>([])
@@ -34,7 +34,7 @@ const form = reactive({
 
 const canManage = computed(() => {
   const u = user.value
-  return u?.role === 'admin' || can(u, 'plugin:manage')
+  return u?.role === 'admin' || hasPerm('plugin:manage')
 })
 
 function emptyEndpoint(): PluginEndpoint {

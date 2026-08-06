@@ -64,14 +64,18 @@ GET /api/v1/auth/me
 ```
 
 - 需 `Authorization: Bearer <access_token>`
-- 响应：当前用户信息（无密码字段）
+- 响应：当前用户信息（无密码字段）+ `permissions`（当前用户的权限集合，排序确定，
+  来自角色矩阵 `AttachPermissions` 装载；未装载时回退内置角色表）
 
 ### 虚拟机管理（需认证）
 
 权限：所有路由需 `vm:view`；电源操作分别需 `vm:start`/`vm:stop`/`vm:restart`。
+**资源级授权**：配置了授权表（`vm_access`，默认启用）时，`vm:manage` 用户放行全部；
+其余用户仅可见/可操作 `vm_access` 中授权的 VM（列表过滤，详情/状态/操作未授权按 404
+处理防枚举）。
 
 ```
-GET /api/v1/vms                    → 全部虚拟机（按名称排序）
+GET /api/v1/vms                    → 虚拟机列表（资源级过滤）
 GET /api/v1/vms/:id                → 虚拟机详情
 GET /api/v1/vms/:id/status         → 实时状态（从平台回刷，轮询用）
 POST /api/v1/vms/:id/start         → 启动（仅关机/挂起态，否则 409/4007）
@@ -114,7 +118,8 @@ GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
 ```
 
 - 仅转发插件 `endpoints` 白名单内的端点（方法+路径精确匹配，路径忽略前导斜杠），其余 404
-- 转发目标：`api_url + path`（保留 query/body/Content-Type），注入 `X-PortalT-User` / `X-PortalT-Role` 头
+- 转发目标：`api_url + path`（保留 query/body/Content-Type），注入 `X-PortalT-User` /
+  `X-PortalT-Role` / `X-PortalT-Perms`（用户权限集合的 JSON 数组，排序确定，供插件侧二次鉴权）头
 - 响应**不带信封**：状态码、响应头、body 原样透传（目标不可达 → 502）
 - 插件未启用 → 403；插件不存在 → 404
 
@@ -122,33 +127,43 @@ GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
 
 - API：`/api/v1/plugins/native/:pluginId/...`（路由由插件自身 `Mount` 挂载；插件在 plugins 表中
   不存在或已停用 → 404）
+- **权限声明**：插件 `Info()` 的 `Permission` 为最小访问权限——`nativeGate` 强制校验
+  （用户权限集合/角色矩阵不具备 → 403），同时作为启动同步的默认值（plugins 表记录权限为空时
+  才回填，管理员配置不覆盖）；声明值须在权限字典内（管理 API 层校验，见插件管理一节）
 - 静态前端：`/native/:pluginId/`（公开托管内嵌页，数据访问一律走鉴权 API；前端 iframe 用
   `/native/<id>/` 嵌入）
 - 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `Provider`（平台类型）与
   `WebURL`（平台 Web 界面地址，如 ESXi 的 `https://host/ui/`）
 - 完整开发规范见 [plugins.md](./plugins.md)
-- 示例插件：`esxi-admin`（iframe 嵌入 ESXi Web 管理界面，`internal/plugins/examples/esxiadmin`）、
-  `cron`（内存定时任务，`internal/plugins/examples/cron`）
+- 示例插件：`esxi-admin`（iframe 嵌入 ESXi Web 管理界面，`internal/plugins/examples/esxiadmin`，
+  声明 `plugin:view`）、`cron`（内存定时任务，`internal/plugins/examples/cron`，声明 `plugin:manage`）
 
 ### 用户管理（需认证 + `user:manage`，管理员）
 
 ```
 GET    /api/v1/users     → 全部用户
-POST   /api/v1/users     → 创建用户（username/password 必填，同名 409/4008）
+POST   /api/v1/users     → 创建用户（username/password 必填，同名 409/4008；role 必须是角色表中存在的角色）
 PUT    /api/v1/users/:id → 更新用户（role/email；password 可选，留空不修改）
 DELETE /api/v1/users/:id → 删除用户（不能删除自己）
+GET    /api/v1/users/:id/vm-access  → 用户当前授权的 VM ID 列表（{vm_ids:[...]}）
+PUT    /api/v1/users/:id/vm-access  → 全量替换用户授权（{vm_ids:[...]}，空数组清空）
 ```
+
+- 用户角色不再局限于内置三角色：任意存在于角色表（含自定义角色）的角色值均可分配
 
 ### 角色权限（需认证 + `user:manage`，管理员）
 
 ```
 GET    /api/v1/roles           → 全部角色（内置 admin/user/viewer + 自定义）
-GET    /api/v1/roles/permissions → 权限字典（9 项，中文描述）
-PUT    /api/v1/roles/:id       → 更新角色权限集合（内置角色可改，删除 403）
+GET    /api/v1/roles/permissions → 权限字典（10 项，中文描述）
+POST   /api/v1/roles           → 创建自定义角色（id/name 必填；id 仅小写字母/数字/下划线/连字符 1-32 位）
+PUT    /api/v1/roles/:id       → 更新角色权限集合（内置角色可改）
 DELETE /api/v1/roles/:id       → 删除角色（内置角色不可删）
 ```
 
-- 启动时 `EnsureDefaultRoles` 幂等写入内置三角色种子；`RoleLoader` 缓存角色→权限矩阵，
+- 创建/更新时权限必须全部来自权限字典（未知权限 → 400），自动去重
+- 启动时 `EnsureDefaultRoles` 幂等写入内置三角色种子、`EnsureDefaultPermissions` 幂等写入权限字典
+  （均已入库，权限矩阵与字典以数据库为准）；`RoleLoader` 缓存角色→权限矩阵，
   权限变更后 `Invalidate` 使缓存失效
 - `RequirePermission` 校验顺序：`auth.perms`（角色矩阵）→ 回退 `user.HasPermission`（内置表）
 
@@ -158,7 +173,8 @@ DELETE /api/v1/roles/:id       → 删除角色（内置角色不可删）
 GET /api/v1/guac/ws/:vmId
 ```
 
-- 需 `vm:view`；认证支持 `Authorization: Bearer <token>` 与 `?token=<token>` 两种方式
+- 需 `vm:console`（Phase 10 从 vm:view 拆出）+ 资源级授权（未授权 VM 按 404 处理）；
+  认证支持 `Authorization: Bearer <token>` 与 `?token=<token>` 两种方式
   （浏览器 WebSocket 无法携带自定义请求头，因此支持查询参数；`token` 值会在首个 `?`/`&` 处截断，
   以容忍 guacamole-common-js 追加的 `?<connect data>` 后缀）
 - 隧道模式由环境变量选择（`GuacHandlerForEnv`）：
@@ -258,6 +274,23 @@ type UserRepository interface {
 - 已实现：`internal/adapters/gormstore`（方言无关 GORM 实现，postgres/sqlite 共用）
 - 已实现：`internal/adapters/postgres`（薄包装 + PostgreSQL 方言迁移，原子 upsert `clause.OnConflict`，jsonb metadata 归一化）
 - 已实现：`internal/adapters/sqlite`（薄包装 + SQLite 方言迁移，纯 Go 驱动无 CGO）
+
+```go
+// 权限字典（Phase 10）
+type PermissionRepository interface {
+    FindAll() ([]*domain.PermissionInfo, error)
+    Exists(id string) (bool, error)                       // 权限是否在字典中
+    EnsureDefault(perms []domain.PermissionInfo) error    // 幂等 seed，已存在不覆盖
+}
+
+// 虚拟机资源授权（Phase 10）
+type VMAccessRepository interface {
+    SetForUser(userID string, vmIDs []string) error   // 全量替换
+    VisibleVMIDs(userID string) ([]string, error)
+    IsAuthorized(userID, vmID string) (bool, error)
+    DeleteForUser(userID string) error
+}
+```
 
 ## 虚拟化提供者接口（internal/ports/virtualization.go）
 
@@ -414,22 +447,27 @@ type PluginRepository interface {
 | PERM_VM_START | vm:start | 启动虚拟机 |
 | PERM_VM_STOP | vm:stop | 停止虚拟机 |
 | PERM_VM_RESTART | vm:restart | 重启虚拟机 |
-| PERM_VM_MANAGE | vm:manage | 管理虚拟机 |
+| PERM_VM_MANAGE | vm:manage | 管理虚拟机（含资源级放行全部） |
+| PERM_VM_CONSOLE | vm:console | 远程桌面/控制台（vm:view 拆出） |
 | PERM_PLUGIN_VIEW | plugin:view | 查看插件 |
 | PERM_PLUGIN_MANAGE | plugin:manage | 管理插件 |
 | PERM_USER_MANAGE | user:manage | 管理用户 |
 
 ### 角色权限矩阵
 
-内置三角色为种子数据（启动幂等写入），`admin` 全权限；`user` 具备 VM 电源操作与插件查看；
-`viewer` 仅查看。**矩阵可在角色管理界面动态调整**（`PUT /roles/:id`），不再局限于下表：
+内置三角色为种子数据（启动幂等写入），`admin` 全权限；`user` 具备 VM 电源操作、
+远程桌面与插件查看；`viewer` 仅查看。**矩阵可在角色管理界面动态调整**
+（`PUT /roles/:id`），不再局限于下表：
 
 | 权限 | admin | user | viewer |
 |------|:-----:|:----:|:------:|
 | view_all / vm:view | ✅ | ✅ | ✅ |
 | vm:start / vm:stop / vm:restart | ✅ | ✅ | ❌ |
+| vm:console | ✅ | ✅ | ❌ |
 | plugin:view | ✅ | ✅ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
+
+自定义角色：任意权限子集；插件声明的权限在 API 层强制校验（nativeGate）。
 
 ## 数据库表结构（backend/migrations/）
 
@@ -439,10 +477,11 @@ type PluginRepository interface {
 | vms | id(PK), name, status, cpu, memory_mb, ip_address, host, metadata(JSONB), created_at, updated_at | 虚拟机目录 |
 | plugins | id(PK), name, icon, route(UNIQUE), type, iframe_url, api_url, endpoints, permission, sort_order, is_active, created_at, updated_at | 插件菜单（Phase 9 扩展 type/api_url/endpoints） |
 | roles | id(PK), name, description, permissions(JSON 数组), created_at, updated_at | 角色权限矩阵（Phase 9，迁移 002） |
-| permissions | id(PK), name(UNIQUE), description, created_at | 权限字典（预留） |
+| permissions | id(PK), name(UNIQUE), description, created_at | 权限字典（Phase 10 起生效，启动幂等 seed） |
+| vm_access | id(PK), user_id, vm_id, created_at（user_id+vm_id 唯一） | 虚拟机资源授权（Phase 10，迁移 004） |
 | schema_migrations | version(PK), applied_at | 迁移版本追踪（已应用迁移自动跳过，幂等启动） |
 
-- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types`（{up,down}.sql），按文件名顺序执行
+- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types` / `004_vm_access`（{up,down}.sql），按文件名顺序执行
 - SQLite 方言迁移：`migrations/sqlite/`（`003` 的 ALTER ADD COLUMN 在 SQLite 无 IF NOT EXISTS，
   旧库重放报 "duplicate column name" 由迁移器视为已应用，兼容无版本表时期的存量库）
 - `make test-integration` 自动应用迁移后测试；`TEST_DATABASE_URL` 可覆盖连接
