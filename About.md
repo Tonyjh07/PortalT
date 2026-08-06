@@ -250,6 +250,8 @@ make test-esxi   # 配置.env后，成功列出虚拟机
 
 **验证结果（2026-08-01）**：`make test-esxi` 通过 —— govmomi v0.55.1 + vcsim 模拟 vCenter（`simulator.VPX()`），7 个用例全绿（ListVMs 字段映射/主机名解析/电源操作/NotFound/GetHostInfo/连接失败/会话复用），覆盖率 86.5%；`make test-virt`（mock+工厂）88.9%。`CGO_ENABLED=0` 构建验证通过。
 
+**真实环境验证（2026-08-06）**：ESXi 7.0.3（build-21930508，i5-13400TEF，4 核/6142MB）上集成测试全绿（`go test -tags integration ./internal/adapters/esxi/...`）—— 连接/ListVMs 字段完整映射（含 `Metadata["moid"]`）/GetHostInfo/电源操作全链路（关机-开机-重启）/会话复用/不存在 VM 报错/状态枚举映射；后端以 `VIRT_PROVIDER=esxi` 跑通 API 端到端（登录 → VM 列表 → stop/start/restart）。真实测试需环境变量 `TEST_ESXI_URL/USERNAME/PASSWORD/TEST_ESXI_VM`，见 `docs/conventions.md`。
+
 **完成说明**：
 - `internal/adapters/esxi/provider.go`：govmomi 客户端，惰性连接（首次调用建立会话），ListVMs 用 ContainerView 批量拉取（summary/guest/config），宿主机名二次属性收集解析；幂等 `Close()`；`findVM` 支持 UUID（SearchIndex.FindByUuid）与 MOID（vm- 前缀）两种标识
 - 电源操作（StartVM/StopVM/RestartVM）带 Task.Wait，瞬时故障指数退避重试（200ms 起，3 次默认，`MaxRetries`/`Timeout` 可配）
@@ -715,6 +717,7 @@ DOMAIN=portal.yourlab.com
 | Phase 8: Guacamole集成 | ✅ 完成 | 2026-08-01 | guacd 原生隧道（服务端握手 + VM metadata guac.* 参数注入）+ RemoteDesktop.vue（guacamole-common-js）+ docker-compose 演示容器（guacd + vnc-demo）；浏览器 E2E 全链路通过（登录 → 已连接 → VNC 桌面渲染 → 鼠标输入） |
 | Phase 8 增强 | ✅ 完成 | 2026-08-03 | ①RDP 黑屏根因修复（guacamole-common-js 画布 `z-index:-1`，容器 `.rd-canvas` 补 `position:relative; z-index:0` 创建 stacking context）；②服务端 NOP keepalive 每 10s 规避 guacd 1.5.x 用户输入 15s 超时（GUACAMOLE-2233）；③远程桌面配置面板（PUT /vms/:id/metadata + metadata 同步合并策略）；④详情页布局重构（左：基本信息+扩展信息，右：远程桌面）+ 全屏占满视口；⑤workstation 适配器支持 /power、/ip 子接口；⑥RustDesk 一键连接（metadata `rustdesk.*` + 详情页 `rustdesk://` 唤起本机客户端） |
 | Phase 9: 插件系统 | ✅ 完成 | 2026-08-02 | 三部分全部交付：①权限管理（roles 表+迁移 002、RoleLoader/AttachPermissions 中间件、用户/角色 CRUD API+前端、RBAC 改走角色矩阵）②插件系统（proxy 脚本插件白名单转发+身份头注入、native Go 插件 registry+Deps 注入+内嵌静态页、迁移 003、迁移器版本追踪）③示例插件 esxi-admin（宿主信息+VM 快捷电源）；`go test ./... -count=1` 全绿 + `npm run build` 通过 + 运行时全链路验证（native API/静态页、proxy 转发 200 且 X-PortalT-User 正确注入） |
+| Phase 9 增强（ESXi 嵌入） | ✅ 完成 | 2026-08-06 | esxi-admin 升级为 iframe 嵌入 ESXi Host Client（`/esxi/ui/` 相对路径反代）：Caddy 反代全部 ESXi 绝对路径资源（/ui、/sdk、/sts、/ticket WS 等）+ 剥除 X-Frame-Options/CSP 后，隧道 https 下 UI 加载/登录/VM 控制台全通；本机入口用 `https://127.0.0.1:8443`（自签 RSA 证书——Caddy `tls internal` 的 ECC 证书在 Windows schannel 握手失败），curl 与浏览器双重验证；详见 `docs/external-access.md` §四·六 |
 | Phase 10: CI/CD与部署 | ⬜ 未开始 | - | - |
 
 ### 环境与配置备注
@@ -742,8 +745,8 @@ DOMAIN=portal.yourlab.com
 
 ---
 
-**文档版本**：v1.0  
-**最后更新**：2026-08-01  
+**文档版本**：v1.1  
+**最后更新**：2026-08-06  
 **维护者**：Tonyjh07
 
 ---

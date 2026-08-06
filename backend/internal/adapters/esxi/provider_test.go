@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/vmware/govmomi/simulator"
+	vim "github.com/vmware/govmomi/vim25/types"
 
 	"portalt/internal/domain"
 )
@@ -144,4 +145,12 @@ func findVM(t *testing.T, vms []*domain.VM, id string) *domain.VM {
 	}
 	t.Fatalf("虚拟机 %s 未找到", id)
 	return nil
+}
+
+// TestMapPowerState 验证状态映射（全部枚举均可映射，未知值回退 Unknown）。
+func TestMapPowerState(t *testing.T) {
+	assert.Equal(t, domain.VMStatusPoweredOn, mapPowerState(vim.VirtualMachinePowerStatePoweredOn))
+	assert.Equal(t, domain.VMStatusPoweredOff, mapPowerState(vim.VirtualMachinePowerStatePoweredOff))
+	assert.Equal(t, domain.VMStatusSuspended, mapPowerState(vim.VirtualMachinePowerStateSuspended))
+	assert.Equal(t, domain.VMStatusUnknown, mapPowerState(vim.VirtualMachinePowerState("weird")))
 }

@@ -118,6 +118,56 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
 - 未安装 RustDesk 客户端不影响；启用 HTTPS 域名（80/443）见 Caddyfile 尾部
   注释示例（需域名 DNS 可解析，Caddy 自动签发证书）。
 
+## 四·六、ESXi Web 管理界面嵌入（esxi-admin 插件）
+
+`esxi-admin` 插件在门户内 iframe 嵌入 ESXi Host Client（`https://<esxi-host>/ui/`）。
+**直连内网 IP 不可行**（外部设备不可达 + `X-Frame-Options: DENY`），必须经 Caddy 反代：
+
+### 反代规则（已内置 `caddy/Caddyfile` 的 `esxi_proxy_routes`）
+
+- `/esxi/*` → 剥前缀后指向 ESXi（页面与相对路径静态资源；iframe 地址
+  `ESXI_WEB_URL=/esxi/ui/` 同源反代，本地 http 与隧道 https 均可用）；
+- ESXi 资源/API 走**绝对路径**，需全部反代：`/ui/*`、`/sdk*`、`/sts*`、`/ticket*`、
+  `/vfeed/*`、`/converter/*`、`/eam/*`、`/pbm/*`、`/sms/*`、`/vsan/*`；
+- **必须剥除的响应头**：
+  - `X-Frame-Options: DENY` —— 否则浏览器拒绝 iframe 加载（报"拒绝了我们的连接请求"）；
+  - `Content-Security-Policy: upgrade-insecure-requests` —— 否则 http 页面下
+    子资源被强制升级 https 导致登录失败（`ERR_SSL_PROTOCOL_ERROR`）；
+- `/ticket*` 是 VM 控制台 **WebSocket 端点**（`wss://<host>/ticket/<ticket>`），
+  Caddy `reverse_proxy` 原生透传 WS；
+- 目标 ESXi 用 `ESXI_UPSTREAM` 环境变量覆盖（默认 `192.168.118.129`）。
+
+### 本机/局域网 https 入口（必须）
+
+ESXi Host Client 的 JS **硬编码 `https://` 与 `wss://`** 构造 SDK/控制台地址
+（`$location.host():$location.port()`），因此 **http 页面下 iframe 无法登录/打开控制台**，
+须有 https 入口（隧道域名本身是 https，无此问题）。Caddyfile 中已提供
+`https://:8443` 配置（默认注释，`tls` 指令指定证书）：
+
+```powershell
+# 1) 生成自签证书（CN=127.0.0.1，含 localhost SAN）
+openssl req -x509 -newkey rsa:2048 -keyout C:\portalt\local\portalt-local.key `
+  -out C:\portalt\local\portalt-local.crt -days 3650 -nodes `
+  -subj "/CN=127.0.0.1" -addext "subjectAltName=IP:127.0.0.1,DNS:localhost"
+# 2) 装入系统信任库（无警告），需管理员权限
+certutil -addstore -f Root C:\portalt\local\portalt-local.crt
+# 3) 取消 Caddyfile 中 https://:8443 块注释后重启
+```
+
+> **坑**：`tls internal`（Caddy 自动内部 CA）在 Windows schannel 握手失败
+> （`SEC_E_INTERNAL_ERROR`，ECC 证书兼容问题），必须用 openssl 生成的 RSA 证书显式指定。
+> 前端 `ESXI_WEB_URL=/esxi/ui/`（相对路径，同源）——经 http 入口的页面
+> **不会自动变成 https**，因此门户本机访问请用 `https://127.0.0.1:8443`（或隧道域名），
+> 详见下表"访问入口"。
+
+### 验证
+
+```powershell
+# 反代连通（应 200；welcome.txt 404 是 ESXi 自身行为，可忽略）
+curl -k https://127.0.0.1:8443/esxi/ui/
+# 登录后控制台：浏览器 DevTools → Network → WS，观察 wss://<入口>/ticket/<ticket> 连接成功
+```
+
 ## 五、验证
 
 ```powershell
@@ -150,6 +200,7 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 | 端口 | 服务 | 绑定 | 说明 |
 |------|------|------|------|
 | **8808** | Caddy 入口 | 全部接口（v4+v6） | 隧道/LAN/v6 统一入口；`CADDY_PORT` 可改 |
+| **8443** | Caddy https（ESXi 控制台） | 全部接口（v4+v6） | 自签 RSA 证书；ESXi Host Client 硬编码 https，http 页无法登录/开控制台。证书 SAN 仅 127.0.0.1/localhost，局域网他机访问需另签含对应 IP 的证书 |
 | 80/443 | Caddy HTTPS（可选） | 全部接口 | 域名 TLS 就绪后启用，见 `caddy/Caddyfile` 注释 |
 | 3001 | 前端 preview | 127.0.0.1 | `PORT=3001`（`node .output/server/index.mjs`） |
 | 8080  | 后端 | 127.0.0.1 | `PORT` 可覆盖（默认 `127.0.0.1:8080`） |

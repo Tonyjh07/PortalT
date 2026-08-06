@@ -110,6 +110,7 @@ go env -w GOPROXY=https://goproxy.cn,direct
 ## 虚拟化集成测试约定
 
 - ESXi 适配器：`//go:build esxi` 标签 + govmomi 内置 vcsim 模拟器（`simulator.VPX()`），无需真实环境；`make test-esxi` 执行
+- 真实 ESXi 集成测试（`esxi/real_esxi_test.go`、`real_esxi_power_test.go`）：`//go:build integration` 标签，用环境变量 `TEST_ESXI_URL`/`TEST_ESXI_USERNAME`/`TEST_ESXI_PASSWORD`（凭据不入库）连接真实宿主机；电源测试会真实关/开/重启目标 VM（`TEST_ESXI_VM` 指定名称，缺省取列表第一台运行中的 VM），勿指向生产 VM；只跑只读用例用 `go test -tags integration ./internal/adapters/esxi/ -run '^TestRealESXi_(ListVMs|GetHostInfo|PowerOp_NotFound|ReuseSession)$'`（注意 `-run TestRealESXi` 是子串匹配，会连带执行 `TestRealESXi_PowerCycle` 电源测试），电源全链路单独跑：`go test -tags integration ./internal/adapters/esxi/ -run '^TestRealESXi_PowerCycle$'`
 - Mock 提供者与工厂：无 tag 常驻单测，`make test-virt` 执行
 
 ## API 测试约定

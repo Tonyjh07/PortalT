@@ -5,7 +5,14 @@
 #   2) 直接编辑下方顶级监听端口
 # 详见 docs/external-access.md「生产部署」与「Caddy 入口端口配置」。
 
-:{$CADDY_PORT:8808} {
+# ESXi Host Client 反代规则（iframe 嵌入 + 控制台）：
+#   - /esxi/* 剥前缀后指向 https://<esxi-host>，页面/静态资源相对路径因此可用
+#   - ESXi 资源与 API 走绝对路径 /ui/*、/sdk*、/sts*、/ticket* 等，需全部反代
+#   - 必须剥除 X-Frame-Options: DENY（否则浏览器拒绝 iframe 加载）
+#   - 必须剥除 CSP upgrade-insecure-requests（否则 http 页面下子资源被强制升级 https）
+#   - /ticket* 为 VM 控制台 WebSocket 端点（wss://.../ticket/<ticket>），reverse_proxy 原生透传
+# 目标 ESXi 由 ESXI_UPSTREAM 变量控制（默认 192.168.118.129，.env.example 同步维护）
+(esxi_proxy_routes) {
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8080
 	}
@@ -15,18 +22,120 @@
 	handle /healthz {
 		reverse_proxy 127.0.0.1:8080
 	}
+	handle /esxi/* {
+		uri strip_prefix /esxi
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -X-Frame-Options
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /ui/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -X-Frame-Options
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /sdk* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /sts* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /ticket* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /vfeed/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /converter/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /eam/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /pbm/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /sms/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
+	handle /vsan/* {
+		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+			transport http {
+				tls_insecure_skip_verify
+			}
+			header_down -Content-Security-Policy
+		}
+	}
 	handle {
 		reverse_proxy 127.0.0.1:3001
 	}
 }
+
+# 主入口：http（cloudflared 隧道 origin 走此端口）
+:{$CADDY_PORT:8808} {
+	import esxi_proxy_routes
+}
+
+# 本机/局域网 https 入口（可选）：ESXi Host Client 硬编码 https:// 与 wss:// 访问
+# SDK/控制台（ticket），http 页面下 iframe 无法工作，须有 https 入口。
+# 证书为自签（见 docs/external-access.md「ESXi 嵌入」一节，openssl 生成 + certutil 信任），
+# 请勿用 tls internal——其 ECC 证书在 Windows schannel 握手失败（SEC_E_INTERNAL_ERROR）。
+# https://:8443 {
+# 	tls C:\path\to\portalt-local.crt C:\path\to\portalt-local.key
+# 	import esxi_proxy_routes
+# }
 
 # 可选：域名与 HTTPS（自动 TLS），启用后 443/80 入口。
 # demo.tonyjh07.dpdns.org {
 # 	tls {
 # 		dns cloudflare {env.CF_API_TOKEN}
 # 	}
-# 	handle /api/*    { reverse_proxy 127.0.0.1:8080 }
-# 	handle /native/* { reverse_proxy 127.0.0.1:8080 }
-# 	handle /healthz  { reverse_proxy 127.0.0.1:8080 }
-# 	handle           { reverse_proxy 127.0.0.1:3001 }
+# 	import esxi_proxy_routes
 # }
