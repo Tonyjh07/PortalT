@@ -39,16 +39,48 @@
 
 构建机可以是部署机本身（构建完即可运行），也可以另用一台机器交叉编译后拷入。
 
-## 3. 构建
+## 3. 一键脚本部署（推荐）
 
-### 3.1 拉取源码
+仓库 `deploy/` 提供两个脚本（仅依赖 bash + 包管理器，其余依赖自动安装），
+以生产环境为标准：systemd 服务 + Caddy 8808 反代 + Docker 运行 guacd/postgres
+容器 + `/opt/portalt` 部署布局。
+
+### 3.1 全新安装
+
+```bash
+git clone https://github.com/Tonyjh07/PortalT.git && cd PortalT
+bash deploy/install.sh          # 交互式（默认值即生产标准，回车全默认）
+bash deploy/install.sh --yes    # 全默认非交互（postgres/guacd 容器 + mock 虚拟化）
+```
+
+- 自动安装：Go（按 `go.mod` 版本）、Node.js 22、Caddy、Docker（guacd/postgres 容器）；
+- 自动完成：后端编译 → 前端 `npm ci && npm run build` → 部署到 `/opt/portalt`
+  → 生成 `portalt.env`（随机 JWT/管理员密码，仅展示一次）→ 注册并启动
+  `portalt-backend` / `portalt-frontend` → Caddy 反代（:8808）→ 健康检查；
+- 可选：ESXi/Workstation 凭据、cloudflared 隧道（http2 协议，WS 兼容）；
+- 重复执行安全（幂等）：已安装组件自动跳过，已有配置不被覆盖。
+
+### 3.2 日常更新
+
+```bash
+cd PortalT && git pull && bash deploy/update.sh
+```
+
+- 流程：git pull → 重编译后端/重构建前端 → 备份旧产物 → 替换部署 → 重启服务
+  → 健康检查，**任一步失败自动回滚**；
+- 不触碰 `portalt.env` / 数据库 / 容器数据；
+- 以下手动流程（§4 起）仅用于自定义改造场景。
+
+## 4. 构建
+
+### 4.1 拉取源码
 
 ```bash
 git clone https://github.com/Tonyjh07/PortalT.git
 cd PortalT
 ```
 
-### 3.2 后端二进制
+### 4.2 后端二进制
 
 ```bash
 cd backend
@@ -62,7 +94,7 @@ go build -o portalt-server ./cmd/server
 go env -w GOPROXY=https://goproxy.cn,direct
 ```
 
-### 3.3 前端产物
+### 4.3 前端产物
 
 ```bash
 cd frontend
@@ -76,7 +108,7 @@ npm run build     # 产出 .output/（纯 SPA，无需 SSR）
 PORT=3001 node .output/server/index.mjs
 ```
 
-## 4. 配置（环境变量）
+## 5. 配置（环境变量）
 
 后端**直接读取系统环境变量**，不加载 `.env` 文件；生产环境用 systemd
 `EnvironmentFile` 注入。常用变量（完整清单见仓库 `.env.example`）：
@@ -115,7 +147,7 @@ ADMIN_PASSWORD=change-me-too
 安全注意：该文件含 ESXi 明文凭据，权限设为 `600` 且仅 root 可读
 （`chmod 600`、目录 `chmod 700`）。
 
-## 5. 部署（systemd）
+## 6. 部署（systemd）
 
 将二进制与产物放到 `/opt/portalt/`，然后创建两个服务单元。
 
@@ -153,7 +185,7 @@ Restart=on-failure
 WantedBy=multi-user.target
 ```
 
-> 生产部署**必须经过 Caddy**（见 §7）：nuxt preview 的 `/api` 反代走 `routeRules`，
+> 生产部署**必须经过 Caddy**（见 §8）：nuxt preview 的 `/api` 反代走 `routeRules`，
 > 不支持 WebSocket 升级，远程桌面/ESXi 控制台的 WS 通道由 Caddy 负责透传。
 
 ### 启动与验证
@@ -170,10 +202,10 @@ curl -X POST http://127.0.0.1:8080/api/v1/auth/login \
 # 返回 {"code":200,...,"data":{"access_token":"...",...}} 即正常
 ```
 
-## 6. 接入真实 ESXi
+## 7. 接入真实 ESXi
 
 1. 在 `portalt.env` 中设置 `VIRT_PROVIDER=esxi` 与 `VIRT_URL`/`VIRT_USERNAME`/
-   `VIRT_PASSWORD`/`VIRT_INSECURE`（见 §4）；
+   `VIRT_PASSWORD`/`VIRT_INSECURE`（见 §5）；
 2. 重启后端：`systemctl restart portalt-backend`——启动时会执行一次 `SyncVMs`
    全量同步，把 ESXi 上所有 VM 拉入门户目录（平台侧已删除的 VM 会被移除，属预期）；
 3. 验证：
@@ -192,7 +224,7 @@ curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8080/api/v1/vms | jq
 
 > 备用：未配置凭据时 `VIRT_PROVIDER=mock` 仍可完整演示门户（内置 3 台示例 VM）。
 
-## 7. Caddy 反向代理（可选但推荐）
+## 8. Caddy 反向代理（可选但推荐）
 
 仓库 `caddy/Caddyfile` 是生产权威配置，复制即用、无需改内容（入口端口 `CADDY_PORT`、
 目标 ESXi `ESXI_UPSTREAM` 由环境变量控制）。Debian 包自带 systemd 单元，直接接管：
@@ -225,7 +257,7 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
   ECC 证书在 Windows 客户端握手失败）；
 - 外网暴露（Cloudflare Tunnel/域名 TLS）完整流程见 `./external-access.md`。
 
-## 8. 浏览器远程桌面（可选）
+## 9. 浏览器远程桌面（可选）
 
 1. 启动 guacd：`docker compose up -d guacd`（或二进制方式安装 guacd 1.5.x）；
 2. 后端配置 `GUACD_URL=127.0.0.1:4822` 并重启；
@@ -245,7 +277,7 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 
 详细参数与排错见 [remote-desktop.md](./remote-desktop.md)。
 
-## 9. 验证清单（部署完成）
+## 10. 验证清单（部署完成）
 
 | 项 | 方法 |
 |----|------|
@@ -256,7 +288,7 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 | ESXi 管理界面 | esxi-admin 插件页：加载、登录、VM 控制台可打开 |
 | 远程桌面（可选） | VM 详情页「远程桌面」连上并渲染画面 |
 
-## 10. 常见问题
+## 11. 常见问题
 
 | 现象 | 处理 |
 |------|------|
@@ -265,10 +297,10 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 | 电源操作报错 | 状态规则限制（如已开机的 VM 不能再次开机）；ESXi 会话/权限问题看日志 |
 | 端口被占用 | `ss -ltnp` 查 8080/3001/8808 占用；改 `PORT`/`CADDY_PORT` 后需同步 Caddy/隧道 |
 | ESXi 管理界面打不开 | 确认 https 入口（8443 或隧道域名）；metadata/`ESXI_WEB_URL` 指向 `/esxi/ui/` |
-| 远程桌面 WAITING | guacd 是否运行；VM metadata `guac.*` 是否指向可达目标（见 §8） |
+| 远程桌面 WAITING | guacd 是否运行；VM metadata `guac.*` 是否指向可达目标（见 §9） |
 | 构建下载超时 | Go：`go env -w GOPROXY=https://goproxy.cn,direct`；npm：配置镜像 registry |
 
-## 11. 测试（开发/交付前）
+## 12. 测试（开发/交付前）
 
 ```bash
 cd backend && go test ./... -count=1     # 单元+仓储+API 全量（首跑偏慢属正常）

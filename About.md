@@ -526,11 +526,10 @@ git push main
    - 触发条件：`push tags v*` 或 `push main`
    - 构建并推送镜像到 `ghcr.io/${{ github.repository }}`
    - SSH执行远程部署脚本
-3. `deploy.sh` - 服务器部署脚本：
+3. `deploy/install.sh` / `deploy/update.sh` - 服务器部署脚本（一键安装/更新，见 `docs/how-to-use.md` §3）：
    ```bash
-   docker-compose pull
-   docker-compose up -d
-   docker system prune -f
+   bash deploy/install.sh
+   bash deploy/update.sh
    ```
 4. `Makefile` 增加命令：
    - `make build` → 构建所有服务
