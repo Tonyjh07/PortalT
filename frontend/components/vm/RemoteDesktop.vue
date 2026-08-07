@@ -39,16 +39,6 @@ let badSeconds = 0
 let connGen = 0
 let disposed = false
 
-// TODO-REMOVE 临时调试：生产环境定位「WS 已建立但 UI 卡在连接中」
-const __rdT0 = Date.now()
-const __rdLog: string[] = []
-;(window as any).__rdLog = __rdLog
-function __rdlog(...args: unknown[]) {
-  const s = `[rd:+${Date.now() - __rdT0}ms] ${args.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')}`
-  __rdLog.push(s)
-  console.log(s)
-}
-
 // auto 初选：按网络类型决定起始档位（4g/无信息 → 画质；2g/saveData → 流畅）
 function resolveAuto(): Exclude<RdMode, 'auto'> {
   const conn = (navigator as any).connection
@@ -120,15 +110,10 @@ function connectData(): string {
 // 依据容器尺寸同步会话分辨率（缩放只影响观感；真正降低带宽的是
 // 后端按 mode 下发的握手分辨率）。display.scale 是方法，非属性。
 function fit() {
-  __rdlog('fit() begin')
-  if (!client || !display || !displayEl?.parentElement) {
-    __rdlog('fit() skip (missing refs)')
-    return
-  }
+  if (!client || !display || !displayEl?.parentElement) return
   const parent = displayEl.parentElement
   const w = parent.clientWidth
   const h = parent.clientHeight
-  __rdlog('fit() size', w, h)
   if (w <= 0 || h <= 0) return
   client.sendSize(w, h)
   const sw = display.getWidth()
@@ -136,7 +121,6 @@ function fit() {
   if (sw > 0 && sh > 0) {
     display.scale(Math.min(1, w / sw, h / sh))
   }
-  __rdlog('fit() done')
 }
 
 // 帧率监测：包装 display 的绘制入口计数。连续 6 秒「每秒 2-5 帧
@@ -191,7 +175,6 @@ function degradeToFluency() {
 }
 
 function connect() {
-  __rdlog('connect() begin')
   disconnect()
   errorText.value = ''
   connecting.value = true
@@ -212,18 +195,13 @@ function connect() {
   // 加载/重连期间旧会话回调建立双会话。任何一步抛错立即进入错误态，
   // 不再静默卡死在「正在连接」（生产构建下动态 import 曾永不 settle）。
   try {
-    const url = wsUrl()
-    __rdlog('ws url', url)
-    tunnel = new Guacamole.WebSocketTunnel(url)
-    __rdlog('tunnel created')
+    tunnel = new Guacamole.WebSocketTunnel(wsUrl())
     client = new Guacamole.Client(tunnel)
-    __rdlog('client created')
     display = client.getDisplay()
     displayEl = display.getElement()
     if (containerRef.value) {
       containerRef.value.appendChild(displayEl)
     }
-    __rdlog('display appended')
 
     // 包装绘制入口用于帧率采样
     const origDraw = display.draw.bind(display)
@@ -256,19 +234,16 @@ function connect() {
     keyboard.onkeyup = sendKeyup
     setKeyboardActive(!props.paused)
 
-    // 指令到达统计：不能覆盖 tunnel.oninstruction——Client 构造函数内部用它
-    // 做指令分发（sync→CONNECTED 等），覆盖后 Client 收不到任何指令，
-    // 状态机永远卡在 WAITING。掉帧判定改由 display.draw 计数承担。
-    // （注释保留：此处不设置 tunnel.oninstruction）
+    // 不得覆盖 tunnel.oninstruction：Client 构造函数内部用它做指令分发
+    // （sync→CONNECTED 等），覆盖后 Client 收不到任何指令，状态机卡在 WAITING。
+    // 掉帧判定由 display.draw 计数承担（见 startMonitor）。
 
     // 注意：client.onstatechange 收到的是 Client.State（非 Tunnel.State）。
     // WAITING 是 connect() 同步置的状态（WS 未必已通，失败也会经过它），
     // 只有 CONNECTED（首帧已渲染）才代表真的连上。
     client.onstatechange = (state: number) => {
-      __rdlog('onstatechange', state)
       switch (state) {
         case Guacamole.Client.State.CONNECTED:
-          __rdlog('CONNECTED branch: fit()/startMonitor()')
           connecting.value = false
           connected.value = true
           fit()
@@ -288,7 +263,6 @@ function connect() {
       notify()
     }
     client.onerror = (error: { message?: string }) => {
-      __rdlog('client.onerror', error)
       connecting.value = false
       connected.value = false
       errorText.value = friendlyError(error.message || '远程桌面连接失败')
@@ -296,11 +270,8 @@ function connect() {
       notify()
     }
 
-    __rdlog('client.connect() call')
     client.connect(connectData())
-    __rdlog('client.connect() returned')
   } catch (err) {
-    __rdlog('connect() CATCH', err)
     if (gen !== connGen || disposed) return
     // 清理半初始化资源：tunnel 可能已发起 WS 而 client/display 未建完，
     // 直接断开并移除画布，避免悬空连接与残留节点
@@ -324,11 +295,13 @@ function friendlyError(msg: string): string {
   if (/connection failed|unable to connect|timed out|unreachable|refused/i.test(msg)) {
     return '无法连接目标主机：请检查 IP/端口与网络连通性'
   }
+  if (/disconnected by other connection|another connection|already connected/i.test(msg)) {
+    return '该桌面已被其他会话占用（Windows 远程桌面仅允许一个活动连接），请关闭其他会话后重试'
+  }
   return msg
 }
 
 function disconnect() {
-  __rdlog('disconnect() begin')
   // 必须先清空键盘回调再丢引用：guacamole-common-js 的 Keyboard 把
   // keydown/keyup 监听永久挂在 document 上且无 dispose/removeEventListener，
   // 若不清空 onkeydown/onkeyup，组件卸载后仍会拦截并 preventDefault 全局按键，
