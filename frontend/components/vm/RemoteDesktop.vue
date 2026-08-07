@@ -34,7 +34,6 @@ let monitorTimer: ReturnType<typeof setInterval> | null = null
 // auto 模式状态机：off=监测中；fluency=已自动降档；quality=已撤销（锁定画质，不再自动降档）
 let autoState: 'off' | 'fluency' | 'quality' = 'off'
 let drawCount = 0
-let instructionsIn = 0
 let badSeconds = 0
 // 连接代数：重连/模式切换与卸载存在时间窗，仅最新一代的连接被采纳
 let connGen = 0
@@ -140,22 +139,19 @@ function fit() {
   __rdlog('fit() done')
 }
 
-// 帧率监测：包装 display 的绘制入口计数，配合「指令到达量」判断是否在掉帧。
-// 连续 6 秒「每秒 ≥2 条指令（画面在持续更新）但渲染帧率 < 6fps」视为网络不流畅
-// → 自动重连为流畅档。空闲桌面（光标闪烁等本地渲染）指令量少，不会误判。
+// 帧率监测：包装 display 的绘制入口计数。连续 6 秒「每秒 2-5 帧
+// （画面在持续渲染但帧率远低于画质档目标）」视为网络不流畅
+// → 自动重连为流畅档。空闲桌面（光标闪烁等）低于 2 帧/秒，不会误判。
 function startMonitor() {
   if (monitorTimer) return
   monitorTimer = setInterval(() => {
     if (props.mode !== 'auto' || autoState !== 'off' || !connected.value) {
       drawCount = 0
-      instructionsIn = 0
       return
     }
     const frames = drawCount
-    const active = instructionsIn >= 2
     drawCount = 0
-    instructionsIn = 0
-    if (active && frames < 6) {
+    if (frames >= 2 && frames < 6) {
       badSeconds++
     } else {
       badSeconds = 0
@@ -260,12 +256,10 @@ function connect() {
     keyboard.onkeyup = sendKeyup
     setKeyboardActive(!props.paused)
 
-    // 指令到达统计：Tunnel 没有 onmessage 回调，正确钩子是 oninstruction
-    // （每收到一条完整指令回调一次），用于配合帧率判定「持续更新但掉帧」
-    tunnel.oninstruction = () => {
-      instructionsIn++
-      if (instructionsIn === 1) __rdlog('first instruction arrived')
-    }
+    // 指令到达统计：不能覆盖 tunnel.oninstruction——Client 构造函数内部用它
+    // 做指令分发（sync→CONNECTED 等），覆盖后 Client 收不到任何指令，
+    // 状态机永远卡在 WAITING。掉帧判定改由 display.draw 计数承担。
+    // （注释保留：此处不设置 tunnel.oninstruction）
 
     // 注意：client.onstatechange 收到的是 Client.State（非 Tunnel.State）。
     // WAITING 是 connect() 同步置的状态（WS 未必已通，失败也会经过它），
