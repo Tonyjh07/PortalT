@@ -15,6 +15,7 @@ PortalT：HomeLab 统一门户（Go 后端 + Nuxt 3 前端）。详见 `About.md
 - esxi/集成测试默认被 build tag 排除：`go test -tags esxi ./internal/adapters/esxi/...`、`-tags integration ./internal/adapters/...`。
 - 前端构建：`npm.cmd run build`（frontend/ 下）；无 lint 脚本。
 - 后端入口：`go run ./cmd/server`（默认 `127.0.0.1:8080`，管理员 `admin/admin123`）。
+- 生产部署（Linux，目标机拉仓库后）：`bash deploy/install.sh`（一键安装，`--yes` 非交互）；日常更新 `git pull && bash deploy/update.sh`（自动备份/回滚）。`deploy/lib/common.sh` 是两脚本公共库（require_sudo 交互模式走 `sudo -v`）。
 
 ## 架构接线（非文件名能直接看出的部分）
 

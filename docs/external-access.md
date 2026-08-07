@@ -2,7 +2,9 @@
 
 > 从外网访问 PortalT 的推荐方案：`cloudflared` 隧道出站连接 Cloudflare 边缘，
 > **无需开放任何入站端口/防火墙规则**，适合 HomeLab 场景（无公网 IP、运营商 NAT）。
-> 本指南以 Windows 宿主机 + Caddy 反代（生产构建）为例。
+> 本指南以 Windows 宿主机 + Caddy 反代（生产构建）为例；**Linux 生产环境请直接用
+> `deploy/install.sh` 一键部署**（自动安装 Caddy 系统包 + cloudflared 隧道，
+> 见 [how-to-use.md](./how-to-use.md) §3），以下内容供自定义/手工场景参考。
 
 ## 架构
 
@@ -212,6 +214,10 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 | 3000 | dev server | 127.0.0.1 | 仅开发；生产不占用（Caddy 与他端口错开） |
 
 ## 生产部署说明
+
+> 生产（Linux）推荐直接 `bash deploy/install.sh`（见 [how-to-use.md](./how-to-use.md) §3）：
+> 自动安装 Caddy 系统包/Docker/cloudflared、生成 systemd 服务与 `portalt.env`、
+> 写入 `/etc/caddy/Caddyfile` 与 Caddy drop-in 环境变量、健康检查。以下为手工场景说明。
 
 - 生产构建不带 devProxy，`/api` 反代依赖 `routeRules`（不支持 WS 升级），因此
   **入口必须经过 Caddy**（见上节）：

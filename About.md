@@ -691,7 +691,7 @@ DOMAIN=portal.yourlab.com
 - [ ] Phase 0-10 全部完成
 - [x] ~~Phase 0-1~~（完成，见"开发进度"表）
 - [ ] 所有测试通过（覆盖率达标）
-- [ ] 可部署到生产环境（Docker Compose一键启动）
+- [ ] 可部署到生产环境（`deploy/install.sh` 一键部署）
 - [ ] 文档完整（README + API文档）
 - [ ] 插件系统可正常工作（添加/删除菜单）
 - [x] ~~插件系统~~（Phase 9 完成：菜单/权限/脚本与原生插件）
@@ -719,7 +719,7 @@ DOMAIN=portal.yourlab.com
 | Phase 9: 插件系统 | ✅ 完成 | 2026-08-02 | 三部分全部交付：①权限管理（roles 表+迁移 002、RoleLoader/AttachPermissions 中间件、用户/角色 CRUD API+前端、RBAC 改走角色矩阵）②插件系统（proxy 脚本插件白名单转发+身份头注入、native Go 插件 registry+Deps 注入+内嵌静态页、迁移 003、迁移器版本追踪）③示例插件 esxi-admin（宿主信息+VM 快捷电源）；`go test ./... -count=1` 全绿 + `npm run build` 通过 + 运行时全链路验证（native API/静态页、proxy 转发 200 且 X-PortalT-User 正确注入） |
 | Phase 9 增强（ESXi 嵌入） | ✅ 完成 | 2026-08-06 | esxi-admin 升级为 iframe 嵌入 ESXi Host Client（`/esxi/ui/` 相对路径反代）：Caddy 反代全部 ESXi 绝对路径资源（/ui、/sdk、/sts、/ticket WS 等）+ 剥除 X-Frame-Options/CSP 后，隧道 https 下 UI 加载/登录/VM 控制台全通；本机入口用 `https://127.0.0.1:8443`（自签 RSA 证书——Caddy `tls internal` 的 ECC 证书在 Windows schannel 握手失败），curl 与浏览器双重验证；详见 `docs/external-access.md` §四·六 |
 | Phase 9 增强（权限系统完善） | ✅ 完成 | 2026-08-06 | ①权限字典入库（permissions 表启用，启动幂等 seed）+ `vm:console` 权限点（从 vm:view 拆出，guac 路由改走它）②角色管理 API 扩展（POST /roles 创建自定义角色，权限必须来自字典）+ 用户可分配任意角色表角色（不再锁死三角色）③资源级 VM 授权（vm_access 表+迁移 004、`GET/PUT /users/:id/vm-access` 分配接口、VM 列表过滤/详情与电源操作未授权按 404 防枚举、guac 资源校验）④插件权限声明（`Info().Permission` 作默认值不覆盖管理员配置、nativeGate API 层强制校验、proxy 注入 `X-PortalT-Perms` 头、管理 API 校验声明在字典内；esxi-admin 声明专属权限 `esxi-admin:use`（默认仅 admin 持有，普通用户不再可见 ESXi 菜单，迁移 005 覆盖存量库旧值）、cron 示例声明）⑤前端真实权限（`/auth/me` 返回 permissions 集合、useAuth.hasPerm、vm:console 远程桌面入口、用户页资源授权分配、角色页新建角色、动态角色下拉）；`go test ./... -count=1` 全绿 + `npm run build` 通过 |
-| Phase 10: CI/CD与部署 | ⬜ 未开始 | - | - |
+| Phase 10: CI/CD与部署 | 🔄 部分完成（部署脚本） | 2026-08-07 | `deploy/install.sh` + `deploy/update.sh` 一键安装/更新（仅依赖 bash + 包管理器，以生产为标准：systemd + Caddy 8808 + Docker 容器 guacd/postgres + /opt/portalt 布局）；生产服务器实测通过（安装/更新/健康检查/失败回滚）；CI/CD workflow（GitHub Actions）尚未实施 |
 
 ### 环境与配置备注
 - **Go 模块名**：`portalt`（仓库无远端，未使用 github 路径）

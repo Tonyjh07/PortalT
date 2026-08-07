@@ -66,8 +66,8 @@ bash deploy/install.sh --yes    # 全默认非交互（postgres/guacd 容器 + m
 cd PortalT && git pull && bash deploy/update.sh
 ```
 
-- 流程：git pull → 重编译后端/重构建前端 → 备份旧产物 → 替换部署 → 重启服务
-  → 健康检查，**任一步失败自动回滚**；
+- 流程：git pull → 同步数据库迁移文件 → 重编译后端/重构建前端 → 备份旧产物
+  → 替换部署 → 重启服务 → 健康检查，**任一步失败自动回滚**；
 - 不触碰 `portalt.env` / 数据库 / 容器数据；
 - 以下手动流程（§4 起）仅用于自定义改造场景。
 
@@ -187,6 +187,11 @@ WantedBy=multi-user.target
 
 > 生产部署**必须经过 Caddy**（见 §8）：nuxt preview 的 `/api` 反代走 `routeRules`，
 > 不支持 WebSocket 升级，远程桌面/ESXi 控制台的 WS 通道由 Caddy 负责透传。
+>
+> 手动单元与 `install.sh` 生成的版本一致，区别仅在：后者在 postgres 模式下额外带
+> `After=network.target docker.service`、`Wants=docker.service` 与等待数据库就绪的
+> `ExecStartPre`（`docker exec portalt-postgres pg_isready`），前端单元设
+> `HOST=127.0.0.1`（仅本机可达，由 Caddy 反代）。
 
 ### 启动与验证
 
