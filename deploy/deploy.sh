@@ -476,10 +476,10 @@ if $USE_CADDY; then
         info "使用提供的 Caddyfile"
     elif [ -f "$REPO_DIR/caddy/Caddyfile" ]; then
         cp "$REPO_DIR/caddy/Caddyfile" "$DEPLOY_DIR/caddy/Caddyfile"
-        # 替换占位符
-        sed -i "s/{\\$CADDY_PORT:8808}/$CADDY_PORT/g" "$DEPLOY_DIR/caddy/Caddyfile"
+        # 替换占位符（模式单引号保持 {$...} 字面量，防止 shell 展开变量后 sed 误读 \N 为反向引用）
+        sed -i 's/{\$CADDY_PORT:8808}/'"$CADDY_PORT"'/g' "$DEPLOY_DIR/caddy/Caddyfile"
         if [ -n "$ESXI_UPSTREAM" ]; then
-            sed -i "s/{\\$ESXI_UPSTREAM:192.168.118.129}/$ESXI_UPSTREAM/g" "$DEPLOY_DIR/caddy/Caddyfile"
+            sed -i 's/{\$ESXI_UPSTREAM:192.168.118.129}/'"$ESXI_UPSTREAM"'/g' "$DEPLOY_DIR/caddy/Caddyfile"
         fi
         sed -i "s|127.0.0.1:3001|127.0.0.1:$FRONTEND_PORT|g" "$DEPLOY_DIR/caddy/Caddyfile"
         sed -i "s|127.0.0.1:8080|127.0.0.1:$BACKEND_PORT_NUM|g" "$DEPLOY_DIR/caddy/Caddyfile"
