@@ -100,8 +100,8 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
 > - 本机 Caddy 由 Go 源码编译安装（`go install github.com/caddyserver/caddy/v2/cmd/caddy@v2.11.4`，
 >   winget 因外网不通不可用），二进制在 `%USERPROFILE%\go\bin\caddy.exe`；
 > - 前端预览监听 3001：`node .output/server/index.mjs`（nitro 默认 3000，
->   用 `PORT=3001` 或 nitro 配置覆盖）；`NUXT_PUBLIC_API_WS_BASE` **留空**
->   （同源 `wss://<域名>/api/...` 走隧道 → Caddy → 后端）；
+>   用 `PORT=3001` 或 nitro 配置覆盖）；远程桌面 WS 同源动态生成
+>   （`wss://<域名>/api/...` 走隧道 → Caddy → 后端，详见 `remote-desktop.md`）；
 > - 验证命令（本机模拟隧道）：
 >   - 页面：`Invoke-WebRequest http://127.0.0.1:8808/`（200）
 >   - WS：`ws://127.0.0.1:8808/api/v1/guac/ws/<vmId>?token=<token>`（应 OPENED 并收到渲染指令）

@@ -18,11 +18,6 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiBase: '/api/v1',
-      // 远程桌面 WebSocket 直连后端地址（nitro 的 routeRules 反代不支持 WS 升级）。
-      // 留空表示与页面同源；部署/测试环境经 NUXT_PUBLIC_API_WS_BASE 指定，
-      // 如 http://127.0.0.1:8080。构建时直接求值：Nuxt 的 NUXT_PUBLIC_* 运行时
-      // 覆盖对 ssr:false 的 client bundle 不生效，必须在 build 时固化。
-      apiWsBase: process.env.NUXT_PUBLIC_API_WS_BASE || '',
     },
   },
   nitro: {

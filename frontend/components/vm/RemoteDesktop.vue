@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type Guacamole from 'guacamole-common-js'
+// 静态导入 guacamole-common-js：生产构建下动态 import 经 Nuxt chunk loader
+// 包装后 promise 可能永不 settle，且无 catch 导致连接静默卡死在「正在连接」，
+// 改为随组件 chunk 静态打包（按路由分包，低带宽场景仍只在桌面页加载）。
+import Guacamole from 'guacamole-common-js'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { VM } from '~/types'
 
@@ -33,7 +36,7 @@ let autoState: 'off' | 'fluency' | 'quality' = 'off'
 let drawCount = 0
 let instructionsIn = 0
 let badSeconds = 0
-// 连接代数：动态 import 与重连存在时间窗，仅最新一代的连接回调被采纳
+// 连接代数：重连/模式切换与卸载存在时间窗，仅最新一代的连接被采纳
 let connGen = 0
 let disposed = false
 
@@ -84,12 +87,13 @@ function notify() {
 }
 
 function wsUrl(): string {
-  // nitro routeRules 反代不支持 WebSocket 升级（返回 400），
-  // WS 必须直连后端；未配置 apiWsBase 时退回同源（dev 走 wsProxy 模块）。
-  // 注意：guacamole-common-js 的 WebSocketTunnel 只认 "/" 开头或相对路径，
-  // "http(s)://" 绝对 URL 会被拼成相对路径，因此必须转成 "ws(s)://"。
-  const base = (useRuntimeConfig().public.apiWsBase || '').replace(/^http:/, 'ws:')
-  return `${base}/api/v1/guac/ws/${encodeURIComponent(props.vm.id)}`
+  // WS 必须同源直连（https 页面连 ws:// 内网会被浏览器 Mixed Content 拦截）：
+  // 页面是 https 走 wss://（隧道/反代场景），是 http 走 ws://。
+  // 同源时生产经 Caddy/nitro 反代转发到后端，dev 走 wsProxy 模块。
+  // guacamole-common-js 的 WebSocketTunnel 只认 "/" 开头或相对路径，
+  // 因此必须显式拼成 "ws(s)://" 绝对 URL。
+  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${proto}//${window.location.host}/api/v1/guac/ws/${encodeURIComponent(props.vm.id)}`
 }
 
 // 连接参数走 client.connect(data)：库内部拼成 URL 的 query 部分。
@@ -191,13 +195,12 @@ function connect() {
     effectiveMode.value = resolveAuto()
   }
 
-  // 动态加载 guacamole 库：独立 chunk，仅在真正打开桌面时下载（低带宽友好）。
-  // gen 快照防止加载期间再次 connect 时旧回调建立双会话。
-  void import('guacamole-common-js').then((mod) => {
-    const Guac = mod.default
-    if (gen !== connGen || disposed) return
-    tunnel = new Guac.WebSocketTunnel(wsUrl())
-    client = new Guac.Client(tunnel)
+  // 库已静态导入随组件 chunk 加载，无需异步等待；gen 快照防止
+  // 加载/重连期间旧会话回调建立双会话。任何一步抛错立即进入错误态，
+  // 不再静默卡死在「正在连接」（生产构建下动态 import 曾永不 settle）。
+  try {
+    tunnel = new Guacamole.WebSocketTunnel(wsUrl())
+    client = new Guacamole.Client(tunnel)
     display = client.getDisplay()
     displayEl = display.getElement()
     if (containerRef.value) {
@@ -222,7 +225,7 @@ function connect() {
     }) as typeof display.drawBlob
 
     // 鼠标交互（点击/移动/滚轮）
-    mouse = new Guac.Mouse(displayEl)
+    mouse = new Guacamole.Mouse(displayEl)
     const sendMouse = (state: Guacamole.MouseState) => client?.sendMouseState(state, true)
     mouse.onmousedown = sendMouse
     mouse.onmouseup = sendMouse
@@ -230,7 +233,7 @@ function connect() {
 
     // 键盘交互（监听全局按键，焦点在 iframe/canvas 外也生效）。
     // 挂载后按当前 paused 状态决定是否激活，避免弹窗打开时新建键盘吞输入。
-    keyboard = new Guac.Keyboard(document)
+    keyboard = new Guacamole.Keyboard(document)
     keyboard.onkeydown = sendKeydown
     keyboard.onkeyup = sendKeyup
     setKeyboardActive(!props.paused)
@@ -246,18 +249,18 @@ function connect() {
     // 只有 CONNECTED（首帧已渲染）才代表真的连上。
     client.onstatechange = (state: number) => {
       switch (state) {
-        case Guac.Client.State.CONNECTED:
+        case Guacamole.Client.State.CONNECTED:
           connecting.value = false
           connected.value = true
           fit()
           startMonitor()
           break
-        case Guac.Client.State.WAITING:
+        case Guacamole.Client.State.WAITING:
           connecting.value = true
           connected.value = false
           break
-        case Guac.Client.State.DISCONNECTED:
-        case Guac.Client.State.IDLE:
+        case Guacamole.Client.State.DISCONNECTED:
+        case Guacamole.Client.State.IDLE:
           connecting.value = false
           connected.value = false
           stopMonitor()
@@ -274,7 +277,16 @@ function connect() {
     }
 
     client.connect(connectData())
-  })
+  } catch (err) {
+    if (gen !== connGen || disposed) return
+    // 清理半初始化资源：tunnel 可能已发起 WS 而 client/display 未建完，
+    // 直接断开并移除画布，避免悬空连接与残留节点
+    disconnect()
+    connecting.value = false
+    errorText.value = friendlyError(err instanceof Error ? err.message : '远程桌面连接失败')
+    ElMessage.error(errorText.value)
+    notify()
+  }
 }
 
 // friendlyError 将 guacd 返回的英文错误消息映射为中文可操作提示
