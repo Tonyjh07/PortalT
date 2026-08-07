@@ -27,7 +27,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$REPO_DIR"
 
-[ -f "$REPO_DIR/go.mod" ] || error "请从仓库根目录运行：bash deploy/deploy.sh（未检测到 go.mod）"
+[ -f "$REPO_DIR/backend/go.mod" ] || error "未检测到 backend/go.mod，请从仓库根目录运行：bash deploy/deploy.sh"
 ok "仓库根目录: $REPO_DIR"
 
 # 检查 sudo 权限（后续大量操作依赖 sudo）
@@ -61,7 +61,7 @@ done
 # ============================================================
 # Go 安装与后端构建
 # ============================================================
-GO_VER=$(grep '^go ' "$REPO_DIR/go.mod" | awk '{print $2}')
+GO_VER=$(grep '^go ' "$REPO_DIR/backend/go.mod" | awk '{print $2}')
 [ -z "$GO_VER" ] && GO_VER="1.22.5"
 
 if command -v go &>/dev/null; then
