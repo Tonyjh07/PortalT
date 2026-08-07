@@ -27,10 +27,10 @@ const RD_MODE_LABELS: Record<(typeof RD_MODES)[number], string> = {
   quality: '画质优先',
   fluency: '流畅优先',
 }
-const rdMode = ref<(typeof RD_MODES)[number]>(() => {
+const rdMode = ref<(typeof RD_MODES)[number]>((() => {
   const saved = localStorage.getItem('rd-mode')
   return (RD_MODES as readonly string[]).includes(saved ?? '') ? (saved as (typeof RD_MODES)[number]) : 'auto'
-})
+})())
 watch(rdMode, (m) => localStorage.setItem('rd-mode', m))
 
 function toggleFullscreen() {

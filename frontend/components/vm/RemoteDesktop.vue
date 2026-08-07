@@ -268,13 +268,28 @@ function connect() {
     client.onerror = (error: { message?: string }) => {
       connecting.value = false
       connected.value = false
-      errorText.value = error.message || '远程桌面连接失败'
+      errorText.value = friendlyError(error.message || '远程桌面连接失败')
       ElMessage.error(errorText.value)
       notify()
     }
 
     client.connect(connectData())
   })
+}
+
+// friendlyError 将 guacd 返回的英文错误消息映射为中文可操作提示
+// （guacd 通过 5.error 指令携带，常见于 RDP/VNC 认证与目标连接失败）。
+function friendlyError(msg: string): string {
+  if (/authentication failure|authentication failed|auth failed|login failed|username or password|credentials/i.test(msg)) {
+    return '认证失败：用户名或密码错误，请在远程访问配置中检查'
+  }
+  if (/ssl\/tls|ssl negotiation|self-signed|untrusted/i.test(msg)) {
+    return '目标证书不受信：请在远程访问配置中启用「忽略证书校验」'
+  }
+  if (/connection failed|unable to connect|timed out|unreachable|refused/i.test(msg)) {
+    return '无法连接目标主机：请检查 IP/端口与网络连通性'
+  }
+  return msg
 }
 
 function disconnect() {
