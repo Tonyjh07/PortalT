@@ -68,12 +68,13 @@ async function save() {
       'guac.hostname': form.hostname.trim() || null,
       'guac.port': form.port.trim() || null,
       'guac.username': form.username.trim() || null,
-      'guac.password': form.password || null,
       'rustdesk.id': form.rdId.trim() || null,
-      'rustdesk.password': form.rdPassword || null,
       'rustdesk.server': form.rdServer.trim() || null,
       'rustdesk.key': form.rdKey.trim() || null,
     }
+    // 密码只写不回：留空表示保持已存值，不得发送 null（否则会删除已存密码）
+    if (form.password) patch['guac.password'] = form.password
+    if (form.rdPassword) patch['rustdesk.password'] = form.rdPassword
     await api<VM>(`/vms/${props.vm.id}/metadata`, { method: 'PUT', body: patch })
     ElMessage.success('远程访问配置已保存')
     visible.value = false
@@ -116,7 +117,7 @@ async function save() {
         <el-input v-model="form.username" placeholder="RDP: 如 Administrator" autocomplete="off" />
       </el-form-item>
       <el-form-item label="密码">
-        <el-input v-model="form.password" type="password" show-password placeholder="RDP/VNC 登录密码" autocomplete="new-password" />
+        <el-input v-model="form.password" type="password" show-password placeholder="已存密码不回显；留空保持不变" autocomplete="new-password" />
       </el-form-item>
 
       <el-divider content-position="left">RustDesk 一键连接</el-divider>
@@ -127,7 +128,7 @@ async function save() {
         </div>
       </el-form-item>
       <el-form-item label="密码">
-        <el-input v-model="form.rdPassword" type="password" show-password placeholder="连接密码（不回显，留空则客户端输入）" autocomplete="new-password" />
+        <el-input v-model="form.rdPassword" type="password" show-password placeholder="已存密码不回显；留空保持不变" autocomplete="new-password" />
         <div class="rd-form-tip">目标机客户端「安全 → 密码」中设置（可设永久密码）；仅存档供参考，PortalT 不直接使用</div>
       </el-form-item>
       <el-form-item label="服务器">

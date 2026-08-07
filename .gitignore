@@ -22,6 +22,8 @@ frontend/dist/
 
 # 会话日志（opencode 运行记录）
 log.json
+.agents/
+skills-lock.json
 
 # IDE / 系统
 .idea/
