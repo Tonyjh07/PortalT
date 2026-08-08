@@ -1,12 +1,46 @@
 #!/usr/bin/env bash
 # PortalT 更新脚本（生产日常更新：git pull → 构建 → 部署 → 重启 → 健康检查）
 #
-# 用法：cd <仓库根目录> && bash deploy/update.sh
+# 用法：cd <仓库根目录> && bash deploy/update.sh [参数]
+#
+# 参数（可组合）：
+#   --skip-pull|-sp        跳过 git pull
+#   --skip-backend|-sbe    跳过重建后端
+#   --skip-frontend|-sfr   跳过重建前端
+#   --skip-plugins|-spl    跳过重建官方插件
+#   --skip-restart|-sr     跳过服务重启
+#   --skip-health|-sh      跳过健康检查
+#   --help|-h              显示此帮助
+#
+# 自更新：脚本自身在 git pull 后若发生变化，自动 exec 新版本（保留参数）。
+#
 # 前置：已通过 install.sh 部署（/opt/portalt 存在）、仓库已 clone。
 # 安全：不触碰 portalt.env / 数据库 / 容器；前后端均先备份，失败自动回滚。
 
 set -euo pipefail
 trap 'echo -e "\n\033[1;33m[INFO] 更新已取消\033[0m"; exit 1' INT TERM
+
+# ---- 参数解析 ----
+SKIP_PULL=0
+SKIP_BACKEND=0
+SKIP_FRONTEND=0
+SKIP_PLUGINS=0
+SKIP_RESTART=0
+SKIP_HEALTH=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --skip-pull|-sp)     SKIP_PULL=1; shift ;;
+        --skip-backend|-sbe) SKIP_BACKEND=1; shift ;;
+        --skip-frontend|-sfr) SKIP_FRONTEND=1; shift ;;
+        --skip-plugins|-spl) SKIP_PLUGINS=1; shift ;;
+        --skip-restart|-sr)  SKIP_RESTART=1; shift ;;
+        --skip-health|-sh)   SKIP_HEALTH=1; shift ;;
+        --help|-h)
+            sed -n '/^# 用法/,/^$/p' "$0" | sed 's/^# //;s/^#$//'
+            exit 0 ;;
+        *) error "未知参数: $1（用 --help 查看用法）" ;;
+    esac
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/common.sh"
@@ -29,18 +63,33 @@ detect_pkg_manager
 ok "部署目录: $DEPLOY_DIR    仓库: $REPO_DIR"
 
 # ============================================================
-# 2. 拉取最新代码
+# 2. 拉取最新代码（--skip-pull 跳过）
 # ============================================================
-header "拉取最新代码"
-if ! git -C "$REPO_DIR" diff --quiet HEAD; then
-    error "仓库有未提交的本地改动，请先处理（git status 查看）"
+if [ "$SKIP_PULL" = "0" ]; then
+    header "拉取最新代码"
+    if ! git -C "$REPO_DIR" diff --quiet HEAD; then
+        error "仓库有未提交的本地改动，请先处理（git status 查看）"
+    fi
+    if [ -n "$(git -C "$REPO_DIR" ls-files --others --exclude-standard)" ]; then
+        error "仓库有未跟踪文件，请先处理（git status 查看）"
+    fi
+    # 保存脚本自身哈希，用于自更新检测
+    SCRIPT_HASH="$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)"
+    git -C "$REPO_DIR" pull --ff-only || error "git pull 失败（网络或冲突）"
+    CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
+    ok "已更新到: $CURRENT_HEAD"
+
+    # 自更新检测：脚本内容变化则 exec 新版本
+    NEW_HASH="$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)"
+    if [ "$NEW_HASH" != "$SCRIPT_HASH" ]; then
+        info "更新脚本已更新，重新执行新版本 ..."
+        exec "$0" "$@"
+    fi
+else
+    # 跳过 pull 时从现有 HEAD 获取版本号
+    CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
+    ok "跳过 git pull（当前: $CURRENT_HEAD）"
 fi
-if [ -n "$(git -C "$REPO_DIR" ls-files --others --exclude-standard)" ]; then
-    error "仓库有未跟踪文件，请先处理（git status 查看）"
-fi
-git -C "$REPO_DIR" pull --ff-only || error "git pull 失败（网络或冲突）"
-CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
-ok "已更新到: $CURRENT_HEAD"
 
 # 同步数据库迁移文件（新版本可能新增迁移）
 sudo cp -a "$REPO_DIR/backend/migrations/." "$DEPLOY_DIR/migrations/"
@@ -58,12 +107,18 @@ if [ -f /etc/caddy/Caddyfile ] && ! sudo diff -q "$REPO_DIR/caddy/Caddyfile" /et
     sudo mkdir -p /etc/caddy/plugins.d
     if command -v caddy >/dev/null 2>&1; then
         if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-            service_enable_now caddy || true
-            ok "Caddyfile 已更新并 reload"
+            if [ "$SKIP_RESTART" = "0" ]; then
+                service_enable_now caddy || true
+                ok "Caddyfile 已更新并 reload"
+            else
+                ok "Caddyfile 已更新（--skip-restart，未 reload）"
+            fi
         else
             warn "新版 Caddyfile 校验失败，回滚到旧版本 ..."
             sudo cp "$BACKUP_CADDY" /etc/caddy/Caddyfile
-            sudo systemctl reload caddy 2>/dev/null || true
+            if [ "$SKIP_RESTART" = "0" ]; then
+                sudo systemctl reload caddy 2>/dev/null || true
+            fi
             warn "Caddyfile 已回滚（新版语法错误），旧备份保留在 $BACKUP_CADDY"
         fi
     else
@@ -78,82 +133,110 @@ if grep -q "^PORT=" "$DEPLOY_DIR/portalt.env"; then
 fi
 
 # ============================================================
-# 3. 更新后端（构建 → 备份 → 替换 → 重启 → 健康检查，失败回滚）
+# 3. 更新后端（--skip-backend 跳过）
 # ============================================================
-header "更新后端"
-BACKUP_BIN=""
-if [ -f "$DEPLOY_DIR/portalt-server" ]; then
-    BACKUP_BIN="$DEPLOY_DIR/portalt-server.bak.$(date +%Y%m%d%H%M%S)"
-    sudo cp "$DEPLOY_DIR/portalt-server" "$BACKUP_BIN"
-    ok "已备份旧二进制 ($(basename "$BACKUP_BIN"))"
-fi
-
-info "编译后端 ..."
-(cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -o /tmp/portalt-server-new ./cmd/server) \
-    || error "后端编译失败（已跳过部署，旧版本继续运行）"
-
-sudo mv /tmp/portalt-server-new "$DEPLOY_DIR/portalt-server"
-sudo chmod 755 "$DEPLOY_DIR/portalt-server"
-sudo systemctl restart portalt-backend || true
-
-if wait_http "http://127.0.0.1:${BACKEND_PORT_NUM}/healthz"; then
-    ok "后端健康检查通过"
-else
-    warn "后端健康检查失败，回滚到旧版本 ..."
-    if [ -n "$BACKUP_BIN" ]; then
-        sudo mv "$BACKUP_BIN" "$DEPLOY_DIR/portalt-server"
-        sudo systemctl restart portalt-backend || error "回滚后 portalt-backend 仍无法启动"
+if [ "$SKIP_BACKEND" = "0" ]; then
+    header "更新后端"
+    BACKUP_BIN=""
+    if [ -f "$DEPLOY_DIR/portalt-server" ]; then
+        BACKUP_BIN="$DEPLOY_DIR/portalt-server.bak.$(date +%Y%m%d%H%M%S)"
+        sudo cp "$DEPLOY_DIR/portalt-server" "$BACKUP_BIN"
+        ok "已备份旧二进制 ($(basename "$BACKUP_BIN"))"
     fi
-    error "后端更新失败（已回滚，查看: journalctl -u portalt-backend -n 50）"
-fi
 
-# ============================================================
-# 4. 更新前端（构建 → 备份 → 替换 → 重启 → 检查，失败回滚）
-# ============================================================
-header "更新前端"
-command -v npm >/dev/null 2>&1 || error "npm 不可用"
-BACKUP_OUT=""
+    info "编译后端 ..."
+    (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -o /tmp/portalt-server-new ./cmd/server) \
+        || error "后端编译失败（已跳过部署，旧版本继续运行）"
 
-if [ -d "$DEPLOY_DIR/frontend/.output" ]; then
-    BACKUP_OUT="$DEPLOY_DIR/frontend/.output.bak.$(date +%Y%m%d%H%M%S)"
-    sudo mv "$DEPLOY_DIR/frontend/.output" "$BACKUP_OUT"
-    ok "已备份旧前端产物"
-else
-    warn "无旧前端产物可备份"
-fi
-
-info "安装前端依赖 ..."
-if [ -f "$REPO_DIR/frontend/package-lock.json" ]; then
-    (cd "$REPO_DIR/frontend" && npm ci) || { warn "npm ci 失败（可能 lockfile 与依赖声明不一致），回退 npm install ..."; (cd "$REPO_DIR/frontend" && npm install) || true; }
-else
-    (cd "$REPO_DIR/frontend" && npm install) || true
-fi
-
-info "构建前端 ..."
-if (cd "$REPO_DIR/frontend" && npm run build); then
-    sudo cp -a "$REPO_DIR/frontend/.output" "$DEPLOY_DIR/frontend/.output"
-    sudo systemctl restart portalt-frontend || true
-
-    if wait_http "http://127.0.0.1:$(grep -oP 'PORT=\K[0-9]+' /etc/systemd/system/portalt-frontend.service 2>/dev/null || echo 3001)/"; then
-        ok "前端健康检查通过"
+    sudo mv /tmp/portalt-server-new "$DEPLOY_DIR/portalt-server"
+    sudo chmod 755 "$DEPLOY_DIR/portalt-server"
+    if [ "$SKIP_RESTART" = "0" ]; then
+        sudo systemctl restart portalt-backend || true
     else
-        warn "前端健康检查失败"
+        ok "后端二进制已替换（--skip-restart，未重启）"
+    fi
+
+    if [ "$SKIP_HEALTH" = "0" ]; then
+        if wait_http "http://127.0.0.1:${BACKEND_PORT_NUM}/healthz"; then
+            ok "后端健康检查通过"
+        else
+            warn "后端健康检查失败，回滚到旧版本 ..."
+            if [ -n "$BACKUP_BIN" ]; then
+                sudo mv "$BACKUP_BIN" "$DEPLOY_DIR/portalt-server"
+                if [ "$SKIP_RESTART" = "0" ]; then
+                    sudo systemctl restart portalt-backend || error "回滚后 portalt-backend 仍无法启动"
+                fi
+            fi
+            error "后端更新失败（已回滚，查看: journalctl -u portalt-backend -n 50）"
+        fi
+    else
+        ok "后端二进制已部署（--skip-health，未验证）"
+    fi
+else
+    ok "跳过后端更新"
+fi
+
+# ============================================================
+# 4. 更新前端（--skip-frontend 跳过）
+# ============================================================
+if [ "$SKIP_FRONTEND" = "0" ]; then
+    header "更新前端"
+    command -v npm >/dev/null 2>&1 || error "npm 不可用"
+    BACKUP_OUT=""
+
+    if [ -d "$DEPLOY_DIR/frontend/.output" ]; then
+        BACKUP_OUT="$DEPLOY_DIR/frontend/.output.bak.$(date +%Y%m%d%H%M%S)"
+        sudo mv "$DEPLOY_DIR/frontend/.output" "$BACKUP_OUT"
+        ok "已备份旧前端产物"
+    else
+        warn "无旧前端产物可备份"
+    fi
+
+    info "安装前端依赖 ..."
+    if [ -f "$REPO_DIR/frontend/package-lock.json" ]; then
+        (cd "$REPO_DIR/frontend" && npm ci) || { warn "npm ci 失败（可能 lockfile 与依赖声明不一致），回退 npm install ..."; (cd "$REPO_DIR/frontend" && npm install) || true; }
+    else
+        (cd "$REPO_DIR/frontend" && npm install) || true
+    fi
+
+    info "构建前端 ..."
+    if (cd "$REPO_DIR/frontend" && npm run build); then
+        sudo cp -a "$REPO_DIR/frontend/.output" "$DEPLOY_DIR/frontend/.output"
+        if [ "$SKIP_RESTART" = "0" ]; then
+            sudo systemctl restart portalt-frontend || true
+        else
+            ok "前端产物已部署（--skip-restart，未重启）"
+        fi
+
+        if [ "$SKIP_HEALTH" = "0" ]; then
+            if wait_http "http://127.0.0.1:$(grep -oP 'PORT=\K[0-9]+' /etc/systemd/system/portalt-frontend.service 2>/dev/null || echo 3001)/"; then
+                ok "前端健康检查通过"
+            else
+                warn "前端健康检查失败"
+                FAILED_FRONTEND=1
+            fi
+        else
+            ok "前端产物已部署（--skip-health，未验证）"
+        fi
+    else
+        warn "前端构建失败"
         FAILED_FRONTEND=1
     fi
-else
-    warn "前端构建失败"
-    FAILED_FRONTEND=1
-fi
 
-if [ "${FAILED_FRONTEND:-0}" = "1" ] && [ -n "$BACKUP_OUT" ]; then
-    warn "回滚前端产物 ..."
-    sudo rm -rf "$DEPLOY_DIR/frontend/.output"
-    sudo mv "$BACKUP_OUT" "$DEPLOY_DIR/frontend/.output"
-    sudo systemctl restart portalt-frontend || true
-    error "前端更新失败（已回滚到旧产物）"
-fi
-if [ "${FAILED_FRONTEND:-0}" = "1" ]; then
-    error "前端更新失败（无备份可回滚）"
+    if [ "${FAILED_FRONTEND:-0}" = "1" ] && [ -n "$BACKUP_OUT" ]; then
+        warn "回滚前端产物 ..."
+        sudo rm -rf "$DEPLOY_DIR/frontend/.output"
+        sudo mv "$BACKUP_OUT" "$DEPLOY_DIR/frontend/.output"
+        if [ "$SKIP_RESTART" = "0" ]; then
+            sudo systemctl restart portalt-frontend || true
+        fi
+        error "前端更新失败（已回滚到旧产物）"
+    fi
+    if [ "${FAILED_FRONTEND:-0}" = "1" ]; then
+        error "前端更新失败（无备份可回滚）"
+    fi
+else
+    ok "跳过前端更新"
 fi
 
 # 清理旧备份（各保留最近 2 份）
@@ -161,14 +244,16 @@ ls -1t "$DEPLOY_DIR"/portalt-server.bak.* 2>/dev/null | tail -n +3 | xargs -r su
 ls -1dt "$DEPLOY_DIR"/frontend/.output.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
 
 # ============================================================
-# 4.5 插件目录（备份 → 重建官方插件 → 失败回滚）
+# 4.5 插件目录（--skip-plugins 跳过重建，仅确保目录存在）
 # ============================================================
-header "插件目录"
 PLUGINS_DIR="$DEPLOY_DIR/plugins"
 if grep -q '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env"; then
     PLUGINS_DIR="$(grep '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env" | head -1 | cut -d= -f2-)"
 fi
-sudo mkdir -p "$PLUGINS_DIR"
+
+if [ "$SKIP_PLUGINS" = "0" ]; then
+    header "插件目录"
+    sudo mkdir -p "$PLUGINS_DIR"
 
 # 备份现有插件目录（官方插件重建前；失败时回滚，用户插件不丢失）
 PLUGINS_BACKUP="$PLUGINS_DIR.bak.$(date +%Y%m%d%H%M%S)"
@@ -207,6 +292,12 @@ ls -1dt "$DEPLOY_DIR"/plugins.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm 
 
 if [ "$BUILD_FAILED" != "1" ]; then
     ok "插件目录就绪: $PLUGINS_DIR"
+fi
+
+else
+    # 跳过重建时仅确保目录存在
+    sudo mkdir -p "$PLUGINS_DIR"
+    ok "跳过插件重建（目录已就绪: $PLUGINS_DIR）"
 fi
 
 # ============================================================
