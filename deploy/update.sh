@@ -79,11 +79,13 @@ if [ "$SKIP_PULL" = "0" ]; then
     CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
     ok "已更新到: $CURRENT_HEAD"
 
-    # 自更新检测：脚本内容变化则 exec 新版本
+    # 自更新检测：脚本内容变化则用 bash 显式重新执行新版本。
+    # 不用 exec "$0"：$0 可能是相对路径，且脚本未必有可执行权限；
+    # 追加 --skip-pull 避免二次拉取。
     NEW_HASH="$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)"
     if [ "$NEW_HASH" != "$SCRIPT_HASH" ]; then
         info "更新脚本已更新，重新执行新版本 ..."
-        exec "$0" "$@"
+        exec bash "$SCRIPT_DIR/update.sh" --skip-pull "$@"
     fi
 else
     # 跳过 pull 时从现有 HEAD 获取版本号
