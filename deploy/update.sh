@@ -269,6 +269,7 @@ for pdir in "$REPO_DIR"/backend/plugins/*/; do
     [ -d "$pdir" ] || continue
     id="$(basename "$pdir")"
     [ "$id" = "examples" ] && continue
+    [ "$id" = "template" ] && continue
     if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
         info "重建官方插件 $id ..."
         sudo mkdir -p "$PLUGINS_DIR/$id"
