@@ -103,15 +103,21 @@ GET /api/v1/menu
 GET    /api/v1/plugins     → 全部插件（含停用）
 POST   /api/v1/plugins     → 注册插件（id 可选，缺省自动生成；name/route 必填）
 PUT    /api/v1/plugins/:id → 更新插件（全字段覆盖）
-DELETE /api/v1/plugins/:id → 删除插件（native 类型插件由代码托管，不建议删除）
+DELETE /api/v1/plugins/:id → 删除插件（同时移除其 Caddy 规则文件并 reload）
 ```
 
-- 请求体：`{"id","name","icon","route","type","iframe_url","api_url","endpoints","permission","sort_order","is_active"}`
-- `type`：`iframe`（嵌入页面，默认）/ `proxy`（脚本标准 API 代理）/ `native`（Go 原生插件）
-- `proxy` 类型必填 `api_url`（http/https）与 `endpoints`（方法+路径白名单，路径以 `/` 开头）
-- `native` 类型不能通过接口创建，由启动时 `SyncNativePlugins` 按代码注册表 upsert（保留管理员对权限/启用状态的设置）
+- 请求体：`{"id","name","icon","route","type","iframe_url","api_url","endpoints","caddy_rules","permission","sort_order","is_active"}`
+- `type`：`access`（配置型，默认，合并旧 iframe/proxy）/ `native`（进程化原生插件，Phase 3 规划中）
+- `access` 至少提供一种能力：`iframe_url`，或 `api_url` + 至少一个 `endpoints`；三者可**任意共存**
+  （前端一页双区块：iframe 嵌入 + API 面板）
+- `iframe_url` 允许 `http(s)` 或门户内相对路径（如 `/esxi/ui/`，由 Caddy 规则反代）
+- `api_url` 须为 `http(s)`；`endpoints` 为方法+路径白名单（路径以 `/` 开头）
+- `caddy_rules`：原始 Caddy `handle` 片段，保存时落盘 `plugins.d/<id>.caddy` 并触发 reload
+  （`PLUGIN_CADDY_DIR` 为空则跳过；reload 失败返回告警文案但插件已保存）
+- 插件声明的 `permission` 必须存在于权限字典；access 删除/停用会同步移除对应 Caddy 规则文件
+- `native` 类型暂不能通过接口创建（进程化实现后由插件宿主按 manifest 自动 upsert，仅允许改权限/启用状态）
 
-### 脚本插件标准 API 代理（需认证 + `plugin:view`）
+### access 插件标准 API 代理（需认证 + `plugin:view`）
 
 ```
 GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
@@ -123,22 +129,25 @@ GET/POST/PUT/DELETE /api/v1/plugin-proxy/:pluginId/*path
 - 响应**不带信封**：状态码、响应头、body 原样透传（目标不可达 → 502）
 - 插件未启用 → 403；插件不存在 → 404
 
-### 原生插件（需认证 + `plugin:view`，Phase 9）
+### 平台接入信息（需认证）
 
-- API：`/api/v1/plugins/native/:pluginId/...`（路由由插件自身 `Mount` 挂载；插件在 plugins 表中
-  不存在或已停用 → 404）
-- **权限声明**：插件 `Info()` 的 `Permission` 为最小访问权限——`nativeGate` 强制校验
-  （用户权限集合/角色矩阵不具备 → 403），同时作为启动同步的默认值（plugins 表记录权限为空时
-  才回填，管理员配置不覆盖）；声明值须在权限字典内（管理 API 层校验，见插件管理一节）。
-  注意菜单/代理入口组级仍要求通用 `plugin:view`（`/menu`、`/plugins/native`），
-  声明专属权限（如 `esxi-admin:use`）的插件需用户同时持有二者，默认 admin 双持有
-- 静态前端：`/native/:pluginId/`（公开托管内嵌页，数据访问一律走鉴权 API；前端 iframe 用
-  `/native/<id>/` 嵌入）
-- 机制：`internal/plugins.Registry` 启动时注册，`Deps` 注入 `Provider`（平台类型）与
-  `WebURL`（平台 Web 界面地址，如 ESXi 的 `https://host/ui/`）
+```
+GET /api/v1/platform
+```
+
+- 返回当前虚拟化平台连接状态，供 access 插件（如 esxi-admin）的占位页判断可嵌入性：
+  `{"provider": "esxi|workstation|mock", "web_url": "https://host/ui/", "connected": bool}`
+- `connected` 当前仅 `provider == "esxi"` 为 true
+
+### 原生插件（需认证 + `plugin:view`，重构中）
+
+- **现状**：进程化改造（独立进程 + gRPC 控制面 + HTTP 数据面 + 热加载）为重构 Phase 3（规划中），
+  当前 `native` 类型无运行时实现（注册表为空，无示例插件）
+- 目标形态（Phase 3 落地后更新本文档）：插件宿主扫描 `PLUGINS_DIR` 按 `manifest.json` upsert 记录并
+  spawn 进程；API 反代 `/api/v1/plugins/native/:pluginId/...`；静态前端 `/native/<id>/`；
+  运行态 `status`（running/stopped/error/missing）与 `manifest_json` 由宿主回写
+- 权限三层模型保留：组级 `plugin:view` → 每插件 `is_active` 闸门 → 声明的 `permission` 硬校验
 - 完整开发规范见 [plugins.md](./plugins.md)
-- 示例插件：`esxi-admin`（iframe 嵌入 ESXi Web 管理界面，`internal/plugins/examples/esxiadmin`，
-  声明专属权限 `esxi-admin:use`）、`cron`（内存定时任务，`internal/plugins/examples/cron`，声明 `plugin:manage`）
 
 ### 用户管理（需认证 + `user:manage`，管理员）
 
@@ -422,15 +431,18 @@ type PluginRepository interface {
 | name | string | 显示名称 |
 | icon | string | 图标标识（如 mdi:home） |
 | route | string | 前端路由 |
-| type | string | iframe / proxy / native（空=iframe） |
-| iframe_url | string | 嵌入地址（iframe 类型） |
-| api_url | string | 插件 API 服务地址（proxy 类型） |
-| endpoints | array | 端点白名单 `[{method, path, name, description}]`（proxy 类型） |
+| type | string | access / native（空=access） |
+| iframe_url | string | 嵌入地址（access 可选，http(s) 或门户内相对路径） |
+| api_url | string | API 服务地址（access 可选，http(s)） |
+| endpoints | array | 端点白名单 `[{method, path, name, description}]`（access 可选） |
+| caddy_rules | string | access：Caddy 规则片段（落盘 plugins.d/ 并 reload） |
 | permission | string | 访问所需权限，空=无需权限 |
 | sort_order | int | 排序权重（小在前） |
 | is_active | bool | 是否启用 |
+| status | string | native 运行态：running/stopped/error/missing（宿主回写；access 恒为空） |
+| manifest_json | string | native：manifest 缓存（宿主自动同步） |
 
-业务方法：`CanAccess(user *User)`（启用 + 权限双检查）、`IsEnabled()`、`FindEndpoint(method, path)`（白名单匹配，路径忽略前导斜杠）。
+业务方法：`CanAccess(user *User)`（启用 + 权限双检查）、`IsEnabled()`、`FindEndpoint(method, path)`（白名单匹配，路径忽略前导斜杠）、`IsValidPluginType` / `NormalizePluginType`（空→access）。
 
 ### RoleDefinition（internal/domain/role.go）
 
@@ -475,7 +487,7 @@ type PluginRepository interface {
 | esxi-admin:use | ✅ | ❌ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
 
-自定义角色：任意权限子集；插件声明的权限在 API 层强制校验（nativeGate）。
+自定义角色：任意权限子集；插件声明的权限在 API 层强制校验（access 代理经 `Plugin.CanAccess`，native 由插件宿主校验）。
 
 ## 数据库表结构（backend/migrations/）
 
@@ -483,14 +495,16 @@ type PluginRepository interface {
 |----|---------|------|
 | users | id(PK), username(UNIQUE), password_hash, email, role, created_at | 用户账号 |
 | vms | id(PK), name, status, cpu, memory_mb, ip_address, host, metadata(JSONB), created_at, updated_at | 虚拟机目录 |
-| plugins | id(PK), name, icon, route(UNIQUE), type, iframe_url, api_url, endpoints, permission, sort_order, is_active, created_at, updated_at | 插件菜单（Phase 9 扩展 type/api_url/endpoints） |
+| plugins | id(PK), name, icon, route(UNIQUE), type, iframe_url, api_url, endpoints, caddy_rules, permission, sort_order, is_active, status, manifest_json, created_at, updated_at | 插件菜单（重构：type 收敛 access/native，新增 caddy_rules/status/manifest_json） |
 | roles | id(PK), name, description, permissions(JSON 数组), created_at, updated_at | 角色权限矩阵（Phase 9，迁移 002） |
 | permissions | id(PK), name(UNIQUE), description, created_at | 权限字典（Phase 10 起生效，启动幂等 seed） |
 | vm_access | id(PK), user_id, vm_id, created_at（user_id+vm_id 唯一） | 虚拟机资源授权（Phase 10，迁移 004） |
 | schema_migrations | version(PK), applied_at | 迁移版本追踪（已应用迁移自动跳过，幂等启动） |
 
-- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types` / `004_vm_access` / `005_esxi_admin_perm`
+- 迁移脚本：`001_init` / `002_roles` / `003_plugin_types` / `004_vm_access` / `005_esxi_admin_perm` / `006_plugin_refactor`
   （{up,down}.sql），按文件名顺序执行
+- `006_plugin_refactor`：破坏性重建 `plugins` 表（type 收敛 access/native，新增
+  `caddy_rules` / `status` / `manifest_json`；不保留旧 iframe/proxy 配置语义，项目未发布允许破坏）
 - SQLite 方言迁移：`migrations/sqlite/`（`003` 的 ALTER ADD COLUMN 在 SQLite 无 IF NOT EXISTS，
   旧库重放报 "duplicate column name" 由迁移器视为已应用，兼容无版本表时期的存量库）
 - `make test-integration` 自动应用迁移后测试；`TEST_DATABASE_URL` 可覆盖连接

@@ -1,160 +1,136 @@
 # PortalT 插件开发指南
 
-PortalT 的插件机制共三种类型，均为门户侧"菜单项 + 页面"的扩展点：
+PortalT 的插件机制收敛为**两类**，均为门户侧"菜单项 + 页面"的扩展点：
 
-| 类型 | 创建方式 | 页面 | API | 适用场景 |
-|------|----------|------|-----|----------|
-| `iframe` | 管理界面/API | 门户 iframe 嵌入 `iframe_url` | 无（浏览器直连目标） | 内嵌已有 Web 界面（如 ESXi Web UI、Grafana） |
-| `proxy` | 管理界面/API | 门户 iframe 嵌入自身页面 | 标准 API 代理转发到外部服务 | 自带脚本前端、需要服务端转发的应用 |
-| `native` | 代码注册（编译进二进制） | `/native/<id>/` 内嵌静态页 | `/api/v1/plugins/native/<id>/...`（Go 实现） | 需要后端能力（调度、平台交互、鉴权数据）的插件 |
+| 类型 | 运行形态 | 配置来源 | 页面 | Caddy 交互 |
+|------|----------|----------|------|------------|
+| `access` | 纯配置型（无进程） | `plugins` 表（管理界面/API） | iframe 嵌入 + API 面板（可共存） | **是**：`caddy_rules` 字段落盘 `plugins.d/` 并 reload |
+| `native` | 独立进程（PortalT spawn 监督） | `manifest.json` + DB 同步 | `/native/<id>/`（插件自带 HTTP 服务） | 否 |
 
-本文重点讲 **native 原生插件**（`iframe`/`proxy` 无后端代码，配置见 `interfaces.md` 插件管理一节）。
+> 状态：`access` 已实现（合并旧 iframe/proxy）；`native` 进程化改造为重构 Phase 3
+> （规划中），当前 `native` 类型无运行时实现，本文按已落地的契约（manifest / proto）撰写，
+> 生命周期部分在 Phase 3 落地后同步更新。
 
-## 原生插件：目录与文件约定
+## access 插件：纯配置型
+
+无后端代码，管理界面（`/plugins-admin`，`plugin:manage`）或管理 API 配置即可生效。
+一份 access 插件可同时提供三种能力，**任意共存**，仅提供一种时退化为旧行为：
+
+- `iframe_url`：门户 iframe 嵌入页面。允许外部 `http(s)` 地址，或门户内相对路径
+  （如 `/esxi/ui/`，由插件自己的 Caddy 规则反代到目标）。保存时校验 scheme 防注入。
+- `api_url` + `endpoints`：标准 API 白名单代理（见 `docs/interfaces.md` 代理一节）。
+  门户只转发白名单内的端点并注入调用者身份头，不暴露内部接口。
+- `caddy_rules`：原始 Caddy `handle` 片段，落盘到 `<PLUGIN_CADDY_DIR>/<id>.caddy` 并触发
+  reload 热生效。
+
+### access 与 Caddy 交互
 
 ```
-backend/internal/plugins/examples/<name>/
-├── plugin.go        # 插件实现（接口 + API + 可选后台任务）
-├── plugin_test.go   # 路由级测试
-└── static/
-    └── index.html   # 内嵌静态前端（自包含单页，css/js 内联）
+前端 plugins-admin → 保存 CaddyRules → 后端校验 → 落盘 <PLUGIN_CADDY_DIR>/<id>.caddy
+  → 执行 <CADDY_RELOAD_CMD> → Caddy 热生效
+Caddyfile 主文件尾部：import plugins.d/*.caddy
 ```
 
-- 包注释须说明：演示的能力、数据是否持久化（示例默认内存、重启重置）
-- 包名与目录名一致（如 `package cron`）
+- 环境变量：
+  - `PLUGIN_CADDY_DIR`：插件 Caddy 规则目录（默认部署机 `/etc/caddy/plugins.d`）；
+    **为空 = 本地 dev 无 Caddy，保存只接受不落盘不报错**
+  - `CADDY_RELOAD_CMD`：reload 命令（默认 `systemctl reload caddy`）；为空或失败时规则已落盘
+    但提示"将随下次 reload 生效"
+- 删除插件会移除对应 `<id>.caddy` 文件并 reload；**停用（`is_active=false`）或清空 `caddy_rules`**
+  同样移除其文件（停用插件不再占用反代路径）。
+  启动时 `WriteAll` 全量对齐：启用且含规则的 access 插件写入，磁盘上多余/孤儿文件清理，随后 reload 一次。
+- 落盘前若环境存在 `caddy` 可执行文件且规则不含 `{env.*}` 占位符，后端先 `caddy validate`
+  （包装为 `:0` 最小站点）校验片段语法，校验失败不落盘——避免语法错误规则残留导致后续 reload 持续失败。
+  含 `{env.*}` 占位符的规则交由 Caddy 加载期处理（其值依赖运行时环境，如 `{env.ESXI_UPSTREAM}`）。
+- **作用域与安全**：`caddy_rules` 为原始 Caddy 片段，仅 `plugin:manage`（管理员）可写；
+  跨插件路径冲突由 `handle` 声明顺序决定。只应写本插件的 `handle` 块，不要包含站点监听、
+  全局指令等（会破坏 Caddyfile 语法）。部署机建议规则落盘后做 `caddy validate` 校验。
+- 现状说明：`esxi-admin` 插件的 `caddy_rules` 默认值（`DefaultESXIAdminCaddyRules`）即 ESXi
+  反代规则的副本（含 `/esxi/*`、`/ui/*`、`/screen*`、`/sdk*`、`/ticket*` 等 handle，目标主机
+  由 `{env.ESXI_UPSTREAM}` 运行时解析）；内置 `caddy/Caddyfile` 暂仍保留 `esxi_proxy_routes`
+  （未瘦身，与插件规则双份共存且幂等）。「内置 Caddyfile 瘦身 + ESXi 规则迁入插件栏」为后续迁移项。
 
-## 原生插件：Plugin 接口
+### 示例：esxi-admin
 
-实现 `internal/plugins.Plugin` 的三个方法：
+`esxi-admin`（`/esxi-admin`，权限 `esxi-admin:use`，仅 admin 默认持有）由旧 native 插件迁移为
+**access 种子数据**：启动幂等 seed，`iframe_url = /esxi/ui/`（门户内相对路径），
+`caddy_rules` 内置 ESXi Host Client 反代默认值（`/esxi/*`、`/ui/*`、`/screen*` 等含
+`{env.ESXI_UPSTREAM}`）。前端插件页按 `/api/v1/platform` 三态渲染：
+未接入 ESXi（provider ≠ esxi）→ 占位提示；已接入 → iframe 嵌入；加载失败 → 提示检查上游配置。
 
-```go
-type Plugin interface {
-    Info() domain.Plugin              // 元信息：ID/Name/Icon/Route/SortOrder/Permission/IsActive
-    Mount(rt *gin.RouterGroup, deps Deps) // 注册 API（rt 已带鉴权与启用闸门）
-    StaticFS() fs.FS                  // 内嵌静态前端（fs.Sub 风格），无前端返回 nil
+### access 插件权限
+
+三层模型（全部保留复用）：
+
+1. 组级：菜单/代理入口需通用 `plugin:view`
+2. 每插件闸门：`is_active` 必须启用
+3. 声明权限：`permission` 非空时经 `Plugin.CanAccess` 强制校验（用户角色矩阵不具备 → 403）；
+   声明值必须存在于权限字典（管理 API 校验），可留空表示无需额外权限
+
+`X-PortalT-User / X-PortalT-Role / X-PortalT-Perms` 身份透传与代理白名单匹配
+（`FindEndpoint`，方法+路径精确匹配）保持不变。
+
+## native 插件（进程化，Phase 3 规划中）
+
+### 运行时目录与热加载（规划）
+
+```
+<PLUGINS_DIR>（部署机默认 <app>/plugins）
+plugins/
+├── <id>/                 # 目录名 = 插件 ID
+│   ├── plugin            # 可执行文件（任意语言编译产物）
+│   ├── manifest.json     # 元数据 / 权限 / 钩子配置
+│   └── static/           # 插件静态前端（可选，挂 /native/<id>/）
+└── ...（fsnotify 监视整个根目录）
+```
+
+- 新增目录 → 校验 manifest + 可执行文件 → 注册（默认 `is_active=false`，管理员手动启用）
+- manifest / 二进制替换 → 停止旧进程并重启（升级）
+- 目录删除 → 停止进程，DB 记录标记 `missing`（不自动删除，保留管理员配置）
+
+### 进程通信（协议已定，`backend/proto/plugin/v1/plugin.proto`）
+
+```
+PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PLUGIN_GRPC_PORT）
+   ├─ gRPC 控制面（127.0.0.1:<PortalT 分配空闲端口>）
+   │    Handshake(Info)  Health()  Shutdown()  Notify(event)
+   └─ HTTP 数据面（插件自起本地端口，Handshake 上报，PortalT 校验回环后反代）
+```
+
+- 生命周期状态机：`discovered → installed → disabled → enabled → running`
+  ↘ `error`（健康探测失败/崩溃）↘ `missing`（目录被删除）
+- 钩子：启用 `Notify(enabled)`+spawn；停用 `Shutdown()`+kill；升级先停再启；
+  配置变更 `Notify(config_changed)`
+- 安全：仅执行 `PLUGINS_DIR` 内文件（防路径穿越）；反代前校验插件上报 HTTP 地址为回环
+
+### manifest.json 契约（`internal/pluginpkg` 已实现解析/校验）
+
+模板见 `backend/plugins/manifest.example.json`：
+
+```json
+{
+  "id": "my-plugin",
+  "name": "我的插件",
+  "icon": "mdi:puzzle",
+  "route": "/my-plugin",
+  "sort_order": 100,
+  "permission": "",
+  "health_interval_seconds": 30
 }
 ```
 
-约定：
+- `id` 必须等于目录名；`route` 形如 `/id`；`permission` 声明最小访问权限（须在权限字典内，
+  空 = 无需额外权限）；`health_interval_seconds` 为宿主健康探测间隔（秒，缺省默认值）
 
-- `Info()`：`ID` 必须全局唯一（与 `Route` 一致，格式 `"/"+ID`，如 `"cron"` → `/cron`）；
-  `SortOrder` 控制侧栏顺序，不设置时同步默认 100
-- `Mount()`：所有路由都位于 `/api/v1/plugins/native/<id>/` 之下，**不要再加前缀**；
-  路由挂载前已通过 `nativeGate`——插件在 plugins 表中不存在或已停用 → 404
-- 路由组/分组本身已带 `plugin:view` 权限；需要更细粒度（如仅管理员）时，
-  在单个路由上加 `middleware.RequirePermission(domain.PERM_XXX)`
-- API 响应一律用统一信封：`response.OK(c, data)` / `response.Error(c, httpStatus, code, msg)`，
-  错误码见 `docs/interfaces.md`（常用：`CodeNotFound` 4006、`CodeInvalidOperation` 4007、`CodeBadRequest` 4004）
+### 官方插件 submodule 组织
 
-### 权限声明（Permission 字段）
-
-`Info()` 中的 `Permission` 声明插件的**最小访问权限**，语义：
-
-- **作默认值**：启动同步时仅当 plugins 表记录权限为空才回填；管理员在界面配置过
-  （含故意留空）一律不覆盖，管理员调整优先
-- **硬约束**：`nativeGate` 对声明了权限的插件强制校验——当前用户（角色矩阵，
-  未加载时回退内置表）不具备该权限 → 403。即使管理员把角色矩阵改成不包含
-  该权限（界面行为），挂载路由也不会放行，防止权限配置与代码声明脱节
-- **运行时单一事实来源**：矩阵缺权限时，用户内置角色表即使有也不放行（与
-  `RequirePermission` 中间件一致）
-- 声明值必须存在于权限字典（`GET /api/v1/roles/permissions`）；`proxy` 插件创建/更新
-  时同样校验（管理 API 层）
-
-示例：`esxiadmin` 声明专属权限 `esxi-admin:use`（访问 ESXi 管理界面，仅 admin 角色
-默认持有）；`cron` 含任务调度写操作，声明 `plugin:manage`（仅管理员角色矩阵含该权限）。
-
-> 说明：`esxi-admin:use` 控制插件接口调用（nativeGate 强制校验）；菜单入口组级
-> （`/menu`、`/plugins/native`）仍要求通用 `plugin:view`，默认 admin 双持有。
-> 自定义角色最小授权时建议同时授予 `plugin:view`，否则菜单不可见。
-> 存量库升级：esxi-admin 在旧版声明过 `plugin:view`，迁移 `005` 会将其更新为
-> `esxi-admin:use`（管理员手动改过的其他值不受影响）。
-
-## 原生插件：依赖注入 Deps
-
-```go
-type Deps struct {
-    Provider string // 当前虚拟化平台：esxi / workstation / mock
-    WebURL   string // 平台 Web 管理界面地址（如 https://esxi.lan/ui/），空=未配置
-}
-```
-
-- 只读注入，**勿持有跨请求状态**
-- 需要虚拟化能力（ListVMs/电源操作/GetHostInfo）时向 `plugins` 包扩展新的门面接口，
-  与 `VMServiceFacade`（Phase 9 示例期接口，已随 esxi-admin 简化移除）同模式：
-  在 `ports` 层定义小接口，`main.go` 装配时注入实现
-
-## 原生插件：注册与菜单同步
-
-1. `backend/cmd/server/main.go` 的 `builtinPlugins()` 追加 `xxx.New()`
-2. 启动时 `Registry.Register` 校验 ID 冲突，随后 `services.SyncNativePlugins` 按 `Info()`
-   对 plugins 表做 upsert：
-   - 新插件：插入记录（`type=native`，声明权限直接入库）
-   - 已存在：只更新技术字段（类型/名称/图标/路由），**保留管理员在界面设置的权限与启用状态**；
-     权限为空时以声明值回填（默认值语义）
-3. 因此 `native` 类型不能通过管理 API 创建，也**不建议删除**（重启后会被代码重新 upsert）
-
-## 原生插件：静态前端约定
-
-- 公开托管于 `/native/<id>/`（无鉴权中间件），所以**页面本身不得包含敏感数据**，
-  数据一律通过鉴权 API 获取
-- 认证：从 cookie `access_token` 读取令牌，调用 API 时带 `Authorization: Bearer <token>`：
-
-  ```js
-  function token() {
-    const m = document.cookie.match(/(?:^|;\s*)access_token=([^;]+)/);
-    return m ? decodeURIComponent(m[1]) : '';
-  }
-  ```
-
-- 深浅色主题与门户同步（门户主题键为 `localStorage['portalt-theme']`，`html.dark` class）：
-
-  ```js
-  function applyTheme() {
-    const saved = localStorage.getItem('portalt-theme');
-    const dark = saved === 'dark'
-      || (!saved && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    document.documentElement.classList.toggle('dark', dark);
-  }
-  applyTheme();
-  window.addEventListener('storage', e => { if (e.key === 'portalt-theme') applyTheme(); });
-  // 同源兜底：观察父窗口 html.dark
-  try {
-    const parentEl = window.parent.document.documentElement;
-    if (parentEl && parentEl !== document.documentElement) {
-      new MutationObserver(() =>
-        document.documentElement.classList.toggle('dark', parentEl.classList.contains('dark'))
-      ).observe(parentEl, { attributes: true, attributeFilter: ['class'] });
-    }
-  } catch (e) { /* 跨域忽略 */ }
-  ```
-
-- 样式基准：CSS 变量 + `html.dark` 覆盖双套主题（`--bg/--card/--text/--accent` 等），
-  渐变光晕背景、毛玻璃卡片，参考现有示例 `esxiadmin` / `cron` 的 `static/index.html`
-- 轮询类刷新建议 5s 起步，避免频繁请求；操作类交互后局部刷新
-
-## 原生插件：后台任务
-
-示例（`cron` 插件）模式：`New()` 时创建调度器并 `go` 启动后台循环，
-插件随进程生命周期存活；共享状态必须用 `sync.Mutex` 保护；内存数据不持久化，
-需持久化时自行对接 `ports` 仓储并在文档注明。
-
-## 原生插件：测试约定
-
-- 路由级测试：`gin.SetMode(gin.TestMode)` + auth 桩中间件 + `New().Mount(...)`
-- 覆盖点：列表返回、状态切换、执行/副作用（如日志增长）、404 分支、静态页关键内容
-  （`fs.ReadFile(fsys, "index.html")` 断言含 `esxiFrame`、`portalt-theme` 等标记）
-- 运行：`go test ./internal/plugins/... -count=1`（提交前须全绿）
-
-## 示例索引
-
-| 插件 | 位置 | 演示能力 |
-|------|------|----------|
-| esxi-admin | `internal/plugins/examples/esxiadmin` | iframe 嵌入 ESXi Web 管理界面：`/config` 返回 provider/connected/web_url，现代占位页三态（未连接/已连接未配置/可嵌入） |
-| cron | `internal/plugins/examples/cron` | 内存定时任务：后台调度 goroutine + 任务管理 API（jobs/toggle/run/logs）+ 现代化管理页 |
+- `backend/plugins/<id>/` 为独立 git 仓库 submodule（目录结构见 `backend/plugins/README.md`）
+- 当前无官方 native 插件（`esxi-admin` 为 access 配置型，无需 submodule）；`.gitmodules` 已登记约定
+- 用户插件：本地自行维护源码与产物，直接投放预编译产物到 `PLUGINS_DIR`（任意语言），不经本仓库
 
 ## 常见坑
 
-- `ID` 冲突会注册失败并导致启动报错——保持唯一
-- 静态页忘了主题同步 → 深色门户下 iframe 内一片白（或反之）
-- `Mount` 里手写权限中间件时注意顺序：`RequirePermission` 应作用于具体路由而非整组
-- 内存态插件（如 cron）文档与页面都要注明"重启后重置"
+- `caddy_rules` 只写本插件的 `handle` 块；写全局指令会导致 Caddy reload 失败
+- access 代理只暴露白名单端点——未声明的方法/路径一律 403
+- `iframe_url` 用门户内相对路径时必须配套同插件的 Caddy 规则，否则浏览器 404/空白
+- 插件声明权限须在权限字典内，否则管理界面保存报错

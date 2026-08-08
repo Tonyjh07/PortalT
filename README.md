@@ -11,7 +11,7 @@ HomeLab 统一门户系统：在虚拟机中运行的 Web 门户，统一管理 
 - **浏览器远程桌面**：Guacamole 网关（VNC/RDP/SSH），连接参数按 VM 配置，画质/流畅度自适应（低带宽自动降档），无需安装客户端；RustDesk 一键唤起作为备选通道；
 - **ESXi Web 界面嵌入**：esxi-admin 插件 iframe 嵌入 ESXi Host Client（Caddy 反代 + 控制台 WS 透传），不开放 ESXi 管理端口对外；
 - **权限体系**：RBAC 角色矩阵、资源级 VM 授权、插件权限声明；
-- **插件系统**：proxy / native 三种类型，动态菜单与权限接入；
+- **插件系统**：access / native 两类（接入外部资源 / 独立进程插件），动态菜单与权限接入；重构计划见 [plugin-refactor-plan.md](./plugin-refactor-plan.md)；
 - **外部访问**：Cloudflare Tunnel（cloudflared）出站隧道 + Caddy 反代，无需公网 IP / 入站端口。
 
 ## 技术栈
@@ -120,5 +120,7 @@ docker-compose.yml  PostgreSQL / guacd / VNC 演示
   + RustDesk 一键连接）
 - ✅ Phase 9：插件系统（权限/RBAC 矩阵、proxy/native 插件、示例 esxi-admin 嵌入
   ESXi Host Client，Caddy 反代 iframe/控制台已通）
+- 🔄 插件重构 Phase 1-2：access 收敛（type 收敛 access/native、iframe/proxy 合并、
+  Caddy 规则落盘交互、esxi-admin 迁移 access、/api/v1/platform），原生插件进程化 Phase 3 规划中
 - ✅ Phase 10 部署部分：一键安装/更新脚本（`deploy/install.sh` + `update.sh`，2026-08-07
   生产实测通过；CI/CD workflow 尚未实施）
