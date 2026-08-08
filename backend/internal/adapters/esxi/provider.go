@@ -15,7 +15,10 @@ import (
 	"time"
 
 	"github.com/vmware/govmomi"
+	"github.com/vmware/govmomi/fault"
 	"github.com/vmware/govmomi/object"
+	"github.com/vmware/govmomi/session"
+	"github.com/vmware/govmomi/session/keepalive"
 	"github.com/vmware/govmomi/view"
 	"github.com/vmware/govmomi/vim25/mo"
 	vim "github.com/vmware/govmomi/vim25/types"
@@ -49,6 +52,10 @@ func (c Config) withDefaults() Config {
 	}
 	return c
 }
+
+// keepAliveInterval 会话心跳间隔：空闲超过该时长会发心跳维持 ESXi 会话，
+// 远小于 ESXi 默认会话超时，避免长连接静默过期。测试可临时调小。
+var keepAliveInterval = 10 * time.Minute
 
 // Provider ESXi 虚拟化平台提供者（惰性连接，首次调用时建立）。
 type Provider struct {
@@ -196,6 +203,15 @@ func (p *Provider) ensureClient(ctx context.Context) (*govmomi.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("esxi: 连接 %s 失败: %w", p.cfg.URL, err)
 	}
+	// 会话保活：空闲超过 keepAliveInterval 自动发心跳，防止 ESXi 会话超时
+	// 过期后所有请求持续失败（govmomi 默认不会自动恢复已过期会话）。
+	// 注意：govmomi.NewClient 已内部完成 Login，KeepAlive 的 goroutine 不会随
+	// Login 自动启动，须显式 Start()（官方即用于"登录已发生"的缓存会话场景）。
+	keepAlive := session.KeepAlive(c.Client.RoundTripper, keepAliveInterval)
+	if h, ok := keepAlive.(*keepalive.HandlerSOAP); ok {
+		h.Start()
+	}
+	c.Client.RoundTripper = keepAlive
 	p.client = c
 	return c, nil
 }
@@ -269,12 +285,19 @@ func (p *Provider) findVM(ctx context.Context, c *govmomi.Client, id string) (*o
 }
 
 // withRetry 指数退避重试（200ms、400ms、800ms…），上下文取消立即返回。
+// 会话失效（超时/ESXi 重启/被登出）时丢弃缓存的连接，使下一次调用重建会话，
+// 避免所有请求长期失败直到进程重启。
+// 说明：本次调用内的后续重试仍复用本次调用开始时取的 client（fn 闭包捕获），
+// 恢复发生在下一次调用（周期同步/状态轮询会持续触发，最长约一个同步周期）。
 func (p *Provider) withRetry(ctx context.Context, opName string, fn func() error) error {
 	var lastErr error
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		lastErr = fn()
 		if lastErr == nil {
 			return nil
+		}
+		if isSessionError(lastErr) {
+			p.resetClient()
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -291,6 +314,20 @@ func (p *Provider) withRetry(ctx context.Context, opName string, fn func() error
 		}
 	}
 	return fmt.Errorf("esxi: %s 重试 %d 次仍失败: %w", opName, p.cfg.MaxRetries, lastErr)
+}
+
+// isSessionError 判断是否为会话失效类错误（会话超时/ESXi 重启导致凭证失效）。
+func isSessionError(err error) bool {
+	return fault.Is(err, &vim.NotAuthenticated{}) || fault.Is(err, &vim.InvalidLogin{})
+}
+
+// resetClient 丢弃缓存的客户端连接，使下一次调用以新会话重建连接。
+// 故意不执行 Logout：旧会话可能正被其他 goroutine 使用，主动登出会引发竞态，
+// 让服务端按会话超时自然回收即可；KeepAlive 心跳也会在旧会话失效后自行停止。
+func (p *Provider) resetClient() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.client = nil
 }
 
 // toDomainVM 将平台虚拟机对象映射为领域实体。

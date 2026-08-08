@@ -3,12 +3,16 @@
 package esxi
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/vmware/govmomi/session/keepalive"
 	"github.com/vmware/govmomi/simulator"
+	"github.com/vmware/govmomi/vim25/soap"
 	vim "github.com/vmware/govmomi/vim25/types"
 
 	"portalt/internal/domain"
@@ -134,6 +138,88 @@ func TestRetryRecovers(t *testing.T) {
 	_, err = p.ListVMs()
 	require.NoError(t, err)
 	assert.NotEmpty(t, vms)
+}
+
+// TestSessionRecovery 验证会话失效（模拟 ESXi 会话超时/重启）后，
+// 提供者能丢弃旧连接并自动以新会话重连，无需重启进程。
+func TestSessionRecovery(t *testing.T) {
+	p := newSimProvider(t)
+
+	_, err := p.ListVMs()
+	require.NoError(t, err)
+	require.NotNil(t, p.client, "首次调用应建立会话")
+
+	// 模拟 withRetry 检测到会话失效后的行为
+	p.resetClient()
+
+	_, err = p.ListVMs()
+	require.NoError(t, err, "重置连接后应自动重建会话并成功")
+	require.NotNil(t, p.client, "重连后应持有新的客户端")
+}
+
+// TestWithRetry_ResetsClientOnSessionError 验证 withRetry 遇到认证类错误时
+// 会丢弃缓存的客户端（下次调用重连），普通错误不受影响。
+func TestWithRetry_ResetsClientOnSessionError(t *testing.T) {
+	p := newSimProvider(t)
+	_, err := p.ListVMs()
+	require.NoError(t, err)
+	require.NotNil(t, p.client)
+
+	authErr := soap.WrapVimFault(&vim.NotAuthenticated{})
+	err = p.withRetry(context.Background(), "test", func() error { return authErr })
+	require.Error(t, err)
+	assert.Nil(t, p.client, "会话失效后应丢弃缓存的客户端，下次调用重新连接")
+
+	p2 := newSimProvider(t)
+	_, err = p2.ListVMs()
+	require.NoError(t, err)
+	require.NotNil(t, p2.client)
+	_ = p2.withRetry(context.Background(), "test", func() error { return errors.New("普通错误") })
+	assert.NotNil(t, p2.client, "普通错误不应重置客户端")
+}
+
+// TestIsSessionError 验证会话失效错误识别。
+func TestIsSessionError(t *testing.T) {
+	assert.True(t, isSessionError(soap.WrapVimFault(&vim.NotAuthenticated{})), "NotAuthenticated 应判定为会话失效")
+	assert.True(t, isSessionError(soap.WrapVimFault(&vim.InvalidLogin{})), "InvalidLogin 应判定为会话失效")
+	assert.False(t, isSessionError(errors.New("boom")), "普通错误不应判定为会话失效")
+}
+
+// TestKeepAliveStarts 验证会话保活包装已安装且心跳 goroutine 真正启动：
+// 将 vcsim 会话超时设为 200ms、心跳 50ms，空闲超过超时后再次调用仍成功。
+// 若心跳未启动，会话会被 vcsim 回收（NotAuthenticated），本测试会失败。
+func TestKeepAliveStarts(t *testing.T) {
+	old := keepAliveInterval
+	keepAliveInterval = 50 * time.Millisecond
+	defer func() { keepAliveInterval = old }()
+
+	model := simulator.VPX()
+	require.NoError(t, model.Create())
+	defer model.Remove()
+
+	s := model.Service
+	s.Context.Map.OptionManager().Setting = append(s.Context.Map.OptionManager().Setting,
+		&vim.OptionValue{Key: "config.vmacore.soap.sessionTimeout", Value: "200ms"})
+
+	srv := s.NewServer()
+	defer srv.Close()
+
+	p := NewProvider(Config{
+		URL:      srv.URL.String(),
+		Username: "user",
+		Password: "pass",
+		Insecure: true,
+	})
+	t.Cleanup(func() { _ = p.Close() })
+
+	_, err := p.ListVMs()
+	require.NoError(t, err, "首次调用应成功")
+	_, ok := p.client.Client.RoundTripper.(*keepalive.HandlerSOAP)
+	require.True(t, ok, "应安装 keepalive 会话保活包装")
+
+	time.Sleep(500 * time.Millisecond)
+	_, err = p.ListVMs()
+	require.NoError(t, err, "心跳保活后会话应仍有效")
 }
 
 func findVM(t *testing.T, vms []*domain.VM, id string) *domain.VM {

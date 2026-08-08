@@ -125,6 +125,13 @@ func main() {
 		log.Printf("VM 目录已同步: %d 台", n)
 	}
 
+	// 周期后台同步：保持仓储中 VM 状态新鲜（电源状态变化、平台新增/删除 VM）。
+	// 间隔由 VM_SYNC_INTERVAL 控制（秒），默认 60s；避免状态只靠详情页轮询回刷，
+	// 列表页读到陈旧状态。单 goroutine 串行执行，不会重叠。
+	if syncInterval := envSeconds("VM_SYNC_INTERVAL", 60); syncInterval > 0 {
+		go periodicVMSync(ctx, vmService, syncInterval)
+	}
+
 	// 路由
 	api.AppVersion = AppVersion
 	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM, vmAccessRepo)
@@ -164,6 +171,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// periodicVMSync 周期同步 VM 目录：单 goroutine 串行执行（防重叠），
+// 失败仅告警不中断；响应 ctx 取消以便将来优雅停机。
+func periodicVMSync(ctx context.Context, svc *services.VMService, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, err := svc.SyncVMs(ctx); err != nil {
+				log.Printf("警告: VM 周期同步失败: %v", err)
+			}
+		}
+	}
 }
 
 // normalizeAddr 若地址不含 ":"（视为裸端口）则补全为 "127.0.0.1:<port>"。
