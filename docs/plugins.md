@@ -151,6 +151,10 @@ PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PL
   （Handshake/Health/Shutdown/Notify）+ HTTP 数据面（/healthz + /api/hello + 首页）；
   集成测试真实 spawn 该插件验证全生命周期，`go test -tags integration ./internal/pluginhost/...`
 
+## 插件仓库模板
+
+`backend/plugins/template/` 是一个完整的、可独立构建的 native 插件仓库模板，供开发者在 fork/clone 后自定义。详见 `backend/plugins/README.md`。
+
 ### 官方插件 submodule 组织
 
 - `backend/plugins/<id>/` 为独立 git 仓库 submodule（目录结构见 `backend/plugins/README.md`）

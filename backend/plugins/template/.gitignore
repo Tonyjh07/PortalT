@@ -1,0 +1,7 @@
+plugin
+dist/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

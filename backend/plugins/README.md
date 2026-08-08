@@ -10,9 +10,22 @@ backend/plugins/
 │   ├── cmd/...      # 插件可执行文件入口（监听 gRPC 控制面 + HTTP 数据面）
 │   ├── manifest.json
 │   └── static/      # 插件静态前端（可选，挂载 /native/<id>/）
+├── template/        # 插件仓库模板（独立 Go 模块，fork/clone 后自定义）
 ├── examples/        # 本地示例（非 submodule，直接投放 PLUGINS_DIR 验证链路）
 └── README.md
 ```
+
+## 插件仓库模板
+
+`template/` 是一个完整的、可独立构建的 native 插件仓库模板，包含：
+
+- `cmd/plugin/main.go`：gRPC 控制面（Handshake/Health/Shutdown/Notify）+ HTTP 数据面（/healthz + /api + 首页）
+- `manifest.json`：插件元信息（编辑 ID/名称/路由/权限等）
+- `static/index.html`：可选静态前端占位
+- `Makefile`：构建与投放命令
+- 独立的 `go.mod`（通过 `replace` 引用 `portalt` 模块的 proto 包）
+
+用法：fork/clone 后编辑 `manifest.json` 与 `cmd/plugin/main.go` 实现业务逻辑，构建后投放 `PLUGINS_DIR/<id>/`。
 
 ## 登记新官方插件
 

@@ -1,0 +1,11 @@
+# 插件运行时 meta 信息。字段含义与校验规则见 PortalT docs/plugins.md。
+{
+  "$comment": "编辑此文件配置你的插件。ID 须等于仓库目录名。",
+  "id": "my-plugin",
+  "name": "我的插件",
+  "icon": "mdi:puzzle",
+  "route": "/my-plugin",
+  "sort_order": 100,
+  "permission": "",
+  "health_interval_seconds": 30
+}
