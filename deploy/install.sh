@@ -138,7 +138,7 @@ if [ -x "$BACKEND_BIN" ] && [ -z "$(find "$REPO_DIR/backend" -name '*.go' -newer
     ok "后端二进制已存在（$BACKEND_BIN）"
 else
     info "编译后端（Go 工具链，首次较慢）..."
-    (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -o bin/portalt-server ./cmd/server) || error "后端编译失败"
+    (cd "$REPO_DIR/backend" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o bin/portalt-server ./cmd/server) || error "后端编译失败"
     ok "后端编译完成"
 fi
 
@@ -303,7 +303,7 @@ for pdir in "$REPO_DIR"/backend/plugins/*/; do
     if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
         info "构建官方插件 $id ..."
         sudo mkdir -p "$DEPLOY_DIR/plugins/$id"
-        if (cd "$pdir" && CGO_ENABLED=0 go build -o "$DEPLOY_DIR/plugins/$id/plugin" ./cmd); then
+        if (cd "$pdir" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o "$DEPLOY_DIR/plugins/$id/plugin" ./cmd); then
             ok "官方插件 $id 已构建到 PLUGINS_DIR/$id/plugin"
         else
             warn "官方插件 $id 构建失败（跳过，可在更新时重试）"

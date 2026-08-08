@@ -145,7 +145,7 @@ if [ "$SKIP_BACKEND" = "0" ]; then
     fi
 
     info "编译后端 ..."
-    (cd "$REPO_DIR/backend" && CGO_ENABLED=0 go build -o /tmp/portalt-server-new ./cmd/server) \
+    (cd "$REPO_DIR/backend" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o /tmp/portalt-server-new ./cmd/server) \
         || error "后端编译失败（已跳过部署，旧版本继续运行）"
 
     sudo mv /tmp/portalt-server-new "$DEPLOY_DIR/portalt-server"
@@ -270,7 +270,7 @@ for pdir in "$REPO_DIR"/backend/plugins/*/; do
     if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
         info "重建官方插件 $id ..."
         sudo mkdir -p "$PLUGINS_DIR/$id"
-        if ! (cd "$pdir" && CGO_ENABLED=0 go build -o "$PLUGINS_DIR/$id/plugin" ./cmd); then
+        if ! (cd "$pdir" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o "$PLUGINS_DIR/$id/plugin" ./cmd); then
             warn "官方插件 $id 构建失败"
             BUILD_FAILED=1
         fi
