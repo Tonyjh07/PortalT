@@ -3,7 +3,7 @@
 // 真实 ESXi 集成测试（默认被 build tag 排除）。
 //
 // 通过环境变量连接：
-//   - TEST_ESXI_URL      平台地址，默认 https://192.168.118.129/sdk
+//   - TEST_ESXI_URL      平台地址（必填，不设则跳过）
 //   - TEST_ESXI_USERNAME 登录用户名，默认 root
 //   - TEST_ESXI_PASSWORD 登录密码（必填，不设则跳过）
 //
@@ -19,7 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// newRealProvider 依据环境变量创建真实 ESXi 提供者；凭据缺失时返回 nil（跳过）。
+// newRealProvider 依据环境变量创建真实 ESXi 提供者；地址或凭据缺失时跳过测试。
 func newRealProvider(t *testing.T) *Provider {
 	t.Helper()
 	password := os.Getenv("TEST_ESXI_PASSWORD")
@@ -28,7 +28,7 @@ func newRealProvider(t *testing.T) *Provider {
 	}
 	url := os.Getenv("TEST_ESXI_URL")
 	if url == "" {
-		url = "https://192.168.118.129/sdk"
+		t.Skip("未设置 TEST_ESXI_URL，跳过真实 ESXi 集成测试")
 	}
 	username := os.Getenv("TEST_ESXI_USERNAME")
 	if username == "" {

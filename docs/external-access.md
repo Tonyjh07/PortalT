@@ -139,7 +139,9 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
     子资源被强制升级 https 导致登录失败（`ERR_SSL_PROTOCOL_ERROR`）；
 - `/ticket*` 是 VM 控制台 **WebSocket 端点**（`wss://<host>/ticket/<ticket>`），
   Caddy `reverse_proxy` 原生透传 WS；
-- 目标 ESXi 用 `ESXI_UPSTREAM` 环境变量覆盖（默认 `192.168.118.129`）。
+- 目标 ESXi 用 `ESXI_UPSTREAM` 环境变量设置（**只填主机名/IP，不带 scheme 与端口**，上游固定走 443；
+  **仓库不预设地址**；未设置时 Caddy 仍正常启动，仅访问 `/esxi/*`、`/ui/*` 等路径请求期报错，
+  避免静默反代到错误主机）。
 
 ### 本机/局域网 https 入口（必须）
 
@@ -239,7 +241,7 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 2. 环境变量注入（可写入服务/计划任务环境）：
    ```powershell
    $env:CADDY_PORT = "8808"                   # 入口端口（默认 8808，改后同步隧道 ingress）
-   $env:ESXI_UPSTREAM = "192.168.118.129"     # 目标 ESXi（默认值相同；多 ESXi 时必配）
+   $env:ESXI_UPSTREAM = "esxi.lan"           # 目标 ESXi，只填主机名/IP（必填，仓库无默认；多 ESXi 时必配）
    ```
 3. 启动：`caddy run --config C:\portalt\caddy\Caddyfile`；
    需要 ESXi 管理界面嵌入时另起 https 入口：按 §四·六 生成自签 RSA 证书并解开

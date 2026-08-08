@@ -124,6 +124,7 @@ PORT=3001 node .output/server/index.mjs
 | `JWT_SECRET` | 开发密钥 | **生产必须显式设置**，如 `openssl rand -hex 32` |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | `admin` / `admin123` | 首次启动引导的管理员账号，**上线前务必改** |
 | `GUACD_URL` | 空 | guacd 地址如 `127.0.0.1:4822`（远程桌面，可选） |
+| `VM_SYNC_INTERVAL` | `60` | 后端周期同步 VM 状态的间隔（秒），设 `0` 或非法值回落默认 `60`；保持连接并刷新库存 |
 | `PORT` | `127.0.0.1:8080` | 后端监听地址（保持 127.0.0.1，由 Caddy 反代） |
 
 配置示例（`/opt/portalt/portalt.env`）：
@@ -246,7 +247,7 @@ systemctl restart caddy
 ```ini
 [Service]
 Environment=CADDY_PORT=8808
-Environment=ESXI_UPSTREAM=192.168.1.100
+Environment=ESXI_UPSTREAM=esxi.lan
 ```
 
 （快速验证也可前台跑：`caddy run --config caddy/Caddyfile`，注意先停掉包自带的

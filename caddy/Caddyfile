@@ -12,7 +12,9 @@
 #   - 必须剥除 X-Frame-Options: DENY（否则浏览器拒绝 iframe 加载）
 #   - 必须剥除 CSP upgrade-insecure-requests（否则 http 页面下子资源被强制升级 https）
 #   - /ticket* 为 VM 控制台 WebSocket 端点（wss://.../ticket/<ticket>），reverse_proxy 原生透传
-# 目标 ESXi 由 ESXI_UPSTREAM 变量控制（默认 192.168.118.129，.env.example 同步维护）
+# 目标 ESXi 由 ESXI_UPSTREAM 环境变量控制（仓库不预设地址；只填主机名/IP，不带 scheme 与端口，
+# 上游固定走 443；未设置时 Caddy 仍正常启动，仅访问 /esxi/*、/ui/* 等路径请求期报错，
+# 避免静默反代到错误主机；.env.example 同步维护）
 (esxi_proxy_routes) {
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8080
@@ -25,8 +27,9 @@
 	}
 	handle /esxi/* {
 		uri strip_prefix /esxi
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -X-Frame-Options
@@ -34,8 +37,9 @@
 		}
 	}
 	handle /ui/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -X-Frame-Options
@@ -43,80 +47,90 @@
 		}
 	}
 	handle /screen* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /sdk* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /sts* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /ticket* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /vfeed/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /converter/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /eam/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /pbm/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /sms/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
 		}
 	}
 	handle /vsan/* {
-		reverse_proxy https://{$ESXI_UPSTREAM:192.168.118.129} {
+		reverse_proxy {env.ESXI_UPSTREAM}:443 {
 			transport http {
+				tls
 				tls_insecure_skip_verify
 			}
 			header_down -Content-Security-Policy
