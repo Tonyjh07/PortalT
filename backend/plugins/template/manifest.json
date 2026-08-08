@@ -1,4 +1,3 @@
-# 插件运行时 meta 信息。字段含义与校验规则见 PortalT docs/plugins.md。
 {
   "$comment": "编辑此文件配置你的插件。ID 须等于仓库目录名。",
   "id": "my-plugin",
