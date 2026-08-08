@@ -1,0 +1,10 @@
+{
+  "$comment": "原生插件 manifest 模板。字段含义与校验规则见 docs/plugins.md。",
+  "id": "my-plugin",
+  "name": "我的插件",
+  "icon": "mdi:puzzle",
+  "route": "/my-plugin",
+  "sort_order": 100,
+  "permission": "",
+  "health_interval_seconds": 30
+}

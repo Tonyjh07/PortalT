@@ -1,0 +1,5 @@
+# PortalT 官方原生插件 submodule 登记。
+#
+# 新增官方插件：git submodule add <url> backend/plugins/<id>
+# （目录结构见 backend/plugins/README.md；当前暂无官方 native 插件，
+#  esxi-admin 为 access 配置型插件，无需 submodule。）

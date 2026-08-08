@@ -1,0 +1,97 @@
+// 插件控制面协议（v1）。
+//
+// 协议双方：插件进程实现本服务的全部 RPC（作为 gRPC server 监听本机回环端口），
+// PortalT 作为 gRPC client 主动连接（端口由 PortalT 分配并经由环境变量
+// PORTALT_PLUGIN_GRPC_PORT 下发）。控制面用于握手/健康探测/优雅停机/事件通知；
+// 数据面走插件自起的 HTTP 服务（端口在 Handshake 中上报，PortalT 校验回环后反代）。
+syntax = "proto3";
+
+package plugin.v1;
+
+option go_package = "portalt/proto/plugin/v1;pluginv1";
+
+// PluginControl 插件进程实现的控制面服务。
+service PluginControl {
+  // Handshake 启动握手：插件上报 manifest 元信息与 HTTP 数据面端口，
+  // PortalT 校验与插件表记录一致性，返回启用状态与下发的配置。
+  rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
+  // Health 健康探测：PortalT 周期调用（间隔取 manifest 声明），
+  // 判断插件进程是否存活并就绪。
+  rpc Health(HealthRequest) returns (HealthResponse);
+  // Shutdown 优雅停机：禁用 / 升级 / 删除插件时由 PortalT 调用。
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
+  // Notify 事件通知：enabled / disabled / config_changed 等钩子回调。
+  rpc Notify(NotifyRequest) returns (NotifyResponse);
+}
+
+// Manifest 插件元信息（与 manifest.json 字段一致，用于一致性校验）。
+message Manifest {
+  string id = 1;
+  string name = 2;
+  string icon = 3;
+  string route = 4;
+  int32 sort_order = 5;
+  string permission = 6;
+  int32 health_interval_seconds = 7;
+}
+
+// HandshakeRequest 握手请求。
+message HandshakeRequest {
+  // manifest 插件自述元信息（应与 plugins 表 / manifest.json 一致）。
+  Manifest manifest = 1;
+  // http_port 插件 HTTP 数据面端口（仅回环地址 127.0.0.1，PortalT 校验）。
+  int32 http_port = 2;
+}
+
+// HandshakeResponse 握手响应。
+message HandshakeResponse {
+  // enabled PortalT 决定插件当前是否处于启用状态。
+  bool enabled = 1;
+  // reason 拒绝或启用的说明（如插件未注册、manifest 不一致）。
+  string reason = 2;
+  // portal_version PortalT 版本号，供插件做兼容性判断。
+  string portal_version = 3;
+  // config 下发给插件的键值配置（未来扩展，如授权端点开关）。
+  map<string, string> config = 4;
+}
+
+// HealthRequest 健康探测请求（无参数）。
+message HealthRequest {}
+
+// HealthResponse 健康探测响应。
+message HealthResponse {
+  bool healthy = 1;
+  string detail = 2;
+}
+
+// ShutdownRequest 停机请求。
+message ShutdownRequest {
+  // reason 停机原因（disable / upgrade / delete）。
+  string reason = 1;
+}
+
+// ShutdownResponse 停机响应。
+message ShutdownResponse {}
+
+// NotifyEvent 事件类型。
+enum NotifyEvent {
+  // NOTIFY_EVENT_UNSPECIFIED 未指定（不应使用）。
+  NOTIFY_EVENT_UNSPECIFIED = 0;
+  // ENABLED 插件被启用。
+  ENABLED = 1;
+  // DISABLED 插件被停用。
+  DISABLED = 2;
+  // CONFIG_CHANGED 插件配置变更（权限 / 排序等）。
+  CONFIG_CHANGED = 3;
+  // RESTARTING 插件即将重启（升级场景）。
+  RESTARTING = 4;
+}
+
+// NotifyRequest 事件通知请求。
+message NotifyRequest {
+  NotifyEvent event = 1;
+  map<string, string> data = 2;
+}
+
+// NotifyResponse 事件通知响应。
+message NotifyResponse {}
