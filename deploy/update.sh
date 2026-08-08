@@ -46,9 +46,30 @@ ok "已更新到: $CURRENT_HEAD"
 sudo cp -a "$REPO_DIR/backend/migrations/." "$DEPLOY_DIR/migrations/"
 ok "数据库迁移文件已同步"
 
-# Caddyfile 有差异时提示手动同步（可能含用户手工修改的域名）
+# Caddyfile 差异自动同步：备份旧文件 → 替换为版本库版本 → reload
+# 手动修改的域名等自定义内容请从旧备份中恢复（路径见摘要）
+BACKUP_CADDY=""
 if [ -f /etc/caddy/Caddyfile ] && ! sudo diff -q "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile >/dev/null 2>&1; then
-    warn "仓库 caddy/Caddyfile 与 /etc/caddy/Caddyfile 有差异，请检查后手动同步（sudo cp + systemctl reload caddy）"
+    BACKUP_CADDY="/etc/caddy/Caddyfile.bak.$(date +%Y%m%d%H%M%S)"
+    info "备份旧 Caddyfile 到 $BACKUP_CADDY ..."
+    sudo cp /etc/caddy/Caddyfile "$BACKUP_CADDY"
+    sudo cp "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
+    # 确保 plugins.d 目录存在（新版 Caddyfile import 此处）
+    sudo mkdir -p /etc/caddy/plugins.d
+    if command -v caddy >/dev/null 2>&1; then
+        if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+            service_enable_now caddy || true
+            ok "Caddyfile 已更新并 reload"
+        else
+            warn "新版 Caddyfile 校验失败，回滚到旧版本 ..."
+            sudo cp "$BACKUP_CADDY" /etc/caddy/Caddyfile
+            sudo systemctl reload caddy 2>/dev/null || true
+            warn "Caddyfile 已回滚（新版语法错误），旧备份保留在 $BACKUP_CADDY"
+        fi
+    else
+        # 无 caddy 可执行文件：只落盘不 reload，依赖下次系统重启生效
+        warn "caddy 命令不可用，Caddyfile 已更新但未 reload（下次重启生效）"
+    fi
 fi
 
 BACKEND_PORT_NUM="8080"
