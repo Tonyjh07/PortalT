@@ -40,7 +40,7 @@ export interface VMStatusResult {
   status: VMStatus
 }
 
-export type PluginType = 'iframe' | 'proxy' | 'native'
+export type PluginType = 'access' | 'native'
 
 export interface PluginEndpoint {
   method: string
@@ -58,9 +58,14 @@ export interface Plugin {
   iframe_url: string
   api_url: string
   endpoints: PluginEndpoint[]
+  caddy_rules: string
   permission: string
   sort_order: number
   is_active: boolean
+  /** native 插件运行态（running/stopped/error/missing），access 恒为空 */
+  status: string
+  /** native 插件 manifest 缓存 */
+  manifest_json: string
 }
 
 export interface MenuItem extends Plugin {

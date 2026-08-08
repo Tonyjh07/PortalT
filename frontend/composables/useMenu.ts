@@ -25,10 +25,16 @@ function buildMenuTree(plugins: Plugin[]): MenuItem[] {
         name,
         icon: 'mdi:folder',
         route: parentPath,
+        type: 'access',
         iframe_url: '',
+        api_url: '',
+        endpoints: [],
+        caddy_rules: '',
         permission: '',
         sort_order: Math.min(...list.map((i) => i.sort_order)),
         is_active: true,
+        status: '',
+        manifest_json: '',
         children: [],
       })
     }

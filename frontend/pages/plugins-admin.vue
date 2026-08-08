@@ -13,9 +13,22 @@ const dialogVisible = ref(false)
 const editing = ref<Plugin | null>(null)
 
 const typeLabels: Record<PluginType, string> = {
-  iframe: '嵌入页面',
-  proxy: '标准 API 代理',
+  access: '访问接入',
   native: '原生插件',
+}
+
+const statusLabels: Record<string, string> = {
+  running: '运行中',
+  stopped: '已停止',
+  error: '异常',
+  missing: '未安装',
+}
+
+const statusTypes: Record<string, 'success' | 'info' | 'danger' | 'warning'> = {
+  running: 'success',
+  stopped: 'info',
+  error: 'danger',
+  missing: 'warning',
 }
 
 const form = reactive({
@@ -23,10 +36,11 @@ const form = reactive({
   name: '',
   icon: 'mdi:puzzle',
   route: '',
-  type: 'iframe' as PluginType,
+  type: 'access' as PluginType,
   iframe_url: '',
   api_url: '',
   endpoints: [] as PluginEndpoint[],
+  caddy_rules: '',
   permission: '',
   sort_order: 0,
   is_active: true,
@@ -37,8 +51,28 @@ const canManage = computed(() => {
   return u?.role === 'admin' || hasPerm('plugin:manage')
 })
 
+// native 插件由运行时安装/启停，仅只读展示
+const readonlyNative = computed(() => editing.value?.type === 'native')
+
+const manifest = computed<Record<string, any> | null>(() => {
+  if (!editing.value?.manifest_json) return null
+  try {
+    return JSON.parse(editing.value.manifest_json)
+  } catch {
+    return null
+  }
+})
+
 function emptyEndpoint(): PluginEndpoint {
   return { method: 'GET', path: '/api/info', name: '', description: '' }
+}
+
+function resetForm() {
+  Object.assign(form, {
+    id: '', name: '', icon: 'mdi:puzzle', route: '', type: 'access',
+    iframe_url: '', api_url: '', endpoints: [emptyEndpoint()],
+    caddy_rules: '', permission: '', sort_order: 0, is_active: true,
+  })
 }
 
 async function load() {
@@ -52,25 +86,23 @@ async function load() {
 
 function openCreate() {
   editing.value = null
-  Object.assign(form, {
-    id: '', name: '', icon: 'mdi:puzzle', route: '', type: 'iframe',
-    iframe_url: '', api_url: '', endpoints: [emptyEndpoint()],
-    permission: '', sort_order: 0, is_active: true,
-  })
+  resetForm()
   dialogVisible.value = true
 }
 
 function openEdit(row: Plugin) {
   editing.value = row
+  resetForm()
   Object.assign(form, {
     id: row.id,
     name: row.name,
     icon: row.icon,
     route: row.route,
-    type: row.type ?? 'iframe',
+    type: row.type,
     iframe_url: row.iframe_url ?? '',
     api_url: row.api_url ?? '',
     endpoints: (row.endpoints?.length ? row.endpoints : [emptyEndpoint()]).map((e) => ({ ...e })),
+    caddy_rules: row.caddy_rules ?? '',
     permission: row.permission ?? '',
     sort_order: row.sort_order ?? 0,
     is_active: row.is_active,
@@ -80,14 +112,18 @@ function openEdit(row: Plugin) {
 
 function validateForm(): string | null {
   if (!form.id.trim() || !form.name.trim()) return 'ID 与名称必填'
-  if (form.type === 'proxy') {
-    if (!/^https?:\/\//.test(form.api_url.trim())) return '代理插件必须填写 http(s) API 地址'
-    for (const ep of form.endpoints) {
-      if (!ep.path.startsWith('/')) return '端点路径须以 / 开头（如 /api/info）'
-    }
+  const hasCapability =
+    !!form.iframe_url.trim() ||
+    (!!form.api_url.trim() && form.endpoints.some((e) => e.path.trim()))
+  if (!hasCapability) return '访问接入插件必须配置页面地址，或 API 地址 + 至少一个端点'
+  if (form.iframe_url.trim() && !/^(https?:\/\/|\/)/.test(form.iframe_url.trim())) {
+    return '页面地址须为 http(s) 或门户内相对路径（如 /esxi/ui/）'
   }
-  if (form.type === 'iframe' && !/^https?:\/\//.test(form.iframe_url.trim())) {
-    return '嵌入插件必须填写 http(s) 页面地址'
+  if (form.api_url.trim() && !/^https?:\/\//.test(form.api_url.trim())) {
+    return 'API 地址必须为 http(s)'
+  }
+  for (const ep of form.endpoints) {
+    if (ep.path.trim() && !ep.path.startsWith('/')) return '端点路径须以 / 开头（如 /api/info）'
   }
   return null
 }
@@ -107,6 +143,7 @@ async function save() {
     iframe_url: form.iframe_url.trim(),
     api_url: form.api_url.trim(),
     endpoints: form.endpoints.filter((e) => e.path.trim()),
+    caddy_rules: form.caddy_rules.trim(),
     permission: form.permission,
     sort_order: form.sort_order,
     is_active: form.is_active,
@@ -142,7 +179,7 @@ onMounted(load)
     <div class="page-head">
       <div>
         <h2>插件管理</h2>
-        <p class="page-sub">动态菜单与脚本/原生插件配置（plugin:manage）</p>
+        <p class="page-sub">动态菜单 / 嵌入访问 / 原生插件配置（plugin:manage）</p>
       </div>
       <el-button v-if="canManage" type="primary" @click="openCreate">新建插件</el-button>
     </div>
@@ -153,9 +190,19 @@ onMounted(load)
         <el-table-column prop="id" label="ID" min-width="120" />
         <el-table-column label="类型" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.type === 'native' ? 'success' : row.type === 'proxy' ? 'primary' : 'info'">
+            <el-tag :type="row.type === 'native' ? 'success' : 'primary'">
               {{ typeLabels[row.type as PluginType] ?? row.type }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <template v-if="row.type === 'native'">
+              <el-tag :type="statusTypes[row.status] ?? 'info'" size="small">
+                {{ statusLabels[row.status] ?? row.status }}
+              </el-tag>
+            </template>
+            <span v-else class="text-muted">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="route" label="路由" min-width="120" />
@@ -169,15 +216,48 @@ onMounted(load)
         <el-table-column prop="sort_order" label="排序" width="80" />
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="openEdit(row)">查看 / 编辑</el-button>
             <el-button link type="danger" :disabled="row.type === 'native'" @click="remove(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
     </el-card>
 
-    <el-dialog v-model="dialogVisible" :title="editing ? `编辑插件：${editing.name}` : '新建插件'" width="640px" top="6vh">
-      <el-form label-width="90px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editing ? `编辑插件：${editing.name}` : '新建插件'"
+      width="660px"
+      top="6vh"
+    >
+      <!-- native 插件：只读展示运行状态与 manifest 信息 -->
+      <template v-if="readonlyNative">
+        <el-descriptions :column="1" border>
+          <el-descriptions-item label="ID">{{ editing!.id }}</el-descriptions-item>
+          <el-descriptions-item label="类型">
+            <el-tag type="success">原生插件</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="运行状态">
+            <el-tag :type="statusTypes[editing!.status] ?? 'info'" size="small">
+              {{ statusLabels[editing!.status] ?? editing!.status }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="manifest?.name" label="manifest 名称">{{ manifest.name }}</el-descriptions-item>
+          <el-descriptions-item v-if="manifest?.version" label="版本">{{ manifest.version }}</el-descriptions-item>
+          <el-descriptions-item v-if="manifest?.description" label="描述">{{ manifest.description }}</el-descriptions-item>
+          <el-descriptions-item label="路由">{{ editing!.route }}</el-descriptions-item>
+          <el-descriptions-item label="启用">{{ editing!.is_active ? '是' : '否' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-alert
+          class="native-tip"
+          type="info"
+          :closable="false"
+          show-icon
+          title="原生插件由运行时安装与启停，此处仅展示状态信息"
+        />
+      </template>
+
+      <!-- access 插件：表单编辑 -->
+      <el-form v-else label-width="90px">
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="ID">
@@ -203,36 +283,44 @@ onMounted(load)
           </el-col>
         </el-row>
         <el-form-item label="类型">
-          <el-radio-group v-model="form.type" :disabled="editing?.type === 'native'">
-            <el-radio-button value="iframe">嵌入页面</el-radio-button>
-            <el-radio-button value="proxy">标准 API 代理</el-radio-button>
-            <el-radio-button value="native" :disabled="true">原生插件</el-radio-button>
+          <el-radio-group v-model="form.type">
+            <el-radio-button value="access">访问接入</el-radio-button>
+            <el-radio-button value="native" :disabled="true">原生插件（运行时安装）</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="form.type === 'iframe'" label="页面地址">
-          <el-input v-model="form.iframe_url" placeholder="https://ha.local" />
+        <el-form-item label="页面地址">
+          <el-input v-model="form.iframe_url" placeholder="https://ha.local 或 /esxi/ui/（门户内相对路径）" />
         </el-form-item>
-        <template v-if="form.type === 'proxy'">
-          <el-form-item label="API 地址">
-            <el-input v-model="form.api_url" placeholder="http://127.0.0.1:8701" />
-          </el-form-item>
-          <el-form-item label="API 端点">
-            <div class="endpoints-editor">
-              <div v-for="(ep, i) in form.endpoints" :key="i" class="endpoint-row">
-                <el-select v-model="ep.method" style="width: 96px">
-                  <el-option value="GET" label="GET" />
-                  <el-option value="POST" label="POST" />
-                  <el-option value="PUT" label="PUT" />
-                  <el-option value="DELETE" label="DELETE" />
-                </el-select>
-                <el-input v-model="ep.path" placeholder="/api/info" class="ep-path" />
-                <el-input v-model="ep.name" placeholder="端点名称（可选）" class="ep-name" />
-                <el-button link type="danger" @click="removeEndpoint(i)">移除</el-button>
-              </div>
-              <el-button size="small" @click="addEndpoint">+ 添加端点</el-button>
+        <el-form-item label="API 地址">
+          <el-input v-model="form.api_url" placeholder="http://127.0.0.1:8701" />
+        </el-form-item>
+        <el-form-item label="API 端点">
+          <div class="endpoints-editor">
+            <div v-for="(ep, i) in form.endpoints" :key="i" class="endpoint-row">
+              <el-select v-model="ep.method" style="width: 96px">
+                <el-option value="GET" label="GET" />
+                <el-option value="POST" label="POST" />
+                <el-option value="PUT" label="PUT" />
+                <el-option value="DELETE" label="DELETE" />
+              </el-select>
+              <el-input v-model="ep.path" placeholder="/api/info" class="ep-path" />
+              <el-input v-model="ep.name" placeholder="端点名称（可选）" class="ep-name" />
+              <el-button link type="danger" @click="removeEndpoint(i)">移除</el-button>
             </div>
-          </el-form-item>
-        </template>
+            <el-button size="small" @click="addEndpoint">+ 添加端点</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="Caddy 规则">
+          <el-input
+            v-model="form.caddy_rules"
+            type="textarea"
+            :rows="4"
+            placeholder="需反代到本插件的 Caddy 站点规则，多行。例如：
+route /* {
+    reverse_proxy 127.0.0.1:8701
+}"
+          />
+        </el-form-item>
         <el-row :gutter="12">
           <el-col :span="12">
             <el-form-item label="权限">
@@ -255,7 +343,7 @@ onMounted(load)
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button v-if="!readonlyNative" type="primary" @click="save">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -278,5 +366,13 @@ onMounted(load)
 
 .ep-name {
   flex: 1;
+}
+
+.native-tip {
+  margin-top: 16px;
+}
+
+.text-muted {
+  color: var(--el-text-color-secondary);
 }
 </style>

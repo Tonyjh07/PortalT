@@ -5,14 +5,30 @@ definePageMeta({ middleware: 'auth' })
 
 const route = useRoute()
 const { items, load, findByRoute } = useMenu()
+const { api } = useApi()
 
 const plugin = ref<MenuItem | null>(null)
 const notFound = ref(false)
+
+// 平台接入状态（仅门户内相对路径 iframe 的 access 插件需要，如 esxi-admin）
+interface PlatformInfo {
+  provider: string
+  web_url: string
+  connected: boolean
+}
+const platform = ref<PlatformInfo | null>(null)
+const platformErr = ref(false)
+const iframeFailed = ref(false)
 
 const selectedEndpoint = ref<PluginEndpoint | null>(null)
 const methodBody = ref('')
 const methodResult = ref<{ status: number; body: string } | null>(null)
 const calling = ref(false)
+
+// 是否为门户内相对路径 iframe（由 Caddy 规则反代），需要平台接入状态判断可嵌入性
+function isPortalIframe(p: MenuItem): boolean {
+  return !!p.iframe_url && p.iframe_url.startsWith('/')
+}
 
 async function sync() {
   const path = '/' + (route.params.slug as string[]).join('/')
@@ -28,6 +44,16 @@ async function sync() {
   if (found) {
     plugin.value = found
     notFound.value = false
+    iframeFailed.value = false
+    if (isPortalIframe(found)) {
+      platform.value = null
+      platformErr.value = false
+      try {
+        platform.value = await api<PlatformInfo>('/platform')
+      } catch {
+        platformErr.value = true
+      }
+    }
   } else {
     notFound.value = true
   }
@@ -73,26 +99,44 @@ watch(selectedEndpoint, () => {
 <template>
   <div class="plugin-page">
     <template v-if="plugin">
-      <!-- iframe 类型：嵌入外部页面 -->
-      <iframe
-        v-if="plugin.type === 'iframe'"
-        :src="plugin.iframe_url"
-        class="vm-iframe"
-        title="plugin"
-      />
-      <!-- native 类型：嵌入后端托管的内嵌静态页 -->
-      <iframe
-        v-else-if="plugin.type === 'native'"
-        :src="nativeSrc(plugin)"
-        class="vm-iframe"
-        title="plugin"
-      />
-      <!-- proxy 类型：标准 API 调用面板 -->
-      <div v-else class="proxy-panel">
-        <div v-if="!plugin.endpoints?.length" class="proxy-empty">
-          <el-empty description="该插件未声明任何 API 端点" />
-        </div>
-        <template v-else>
+      <!-- ============ access：一页双区块（iframe 嵌入 + API 面板，可共存） ============ -->
+      <template v-if="plugin.type === 'access'">
+        <!-- 区块一：iframe 嵌入 -->
+        <template v-if="plugin.iframe_url">
+          <!-- 门户内相对路径（如 esxi-admin /esxi/ui/）：按平台接入状态渲染三态 -->
+          <div v-if="isPortalIframe(plugin)" class="access-embed">
+            <template v-if="platform?.connected">
+              <iframe
+                :src="plugin.iframe_url"
+                class="vm-iframe"
+                title="plugin"
+                @error="iframeFailed = true"
+              />
+              <el-alert
+                v-if="iframeFailed"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="嵌入页面加载失败"
+                description="若页面空白，请确认 Caddy 已配置目标上游（ESXI_UPSTREAM）并已重载。"
+              />
+            </template>
+            <div v-else class="embed-empty">
+              <el-empty
+                :description="platformErr ? '无法获取平台接入状态' : '当前未接入 ESXi 虚拟化平台，该插件不可用'"
+              >
+                <template #default>
+                  <p class="embed-hint">接入 ESXi 平台（配置 VIRT_PROVIDER=esxi）并重启服务后，此处将嵌入 ESXi 管理界面。</p>
+                </template>
+              </el-empty>
+            </div>
+          </div>
+          <!-- 外部地址（http/https）：直接嵌入 -->
+          <iframe v-else :src="plugin.iframe_url" class="vm-iframe" title="plugin" />
+        </template>
+
+        <!-- 区块二：标准 API 面板（proxy 能力） -->
+        <div v-if="plugin.endpoints?.length" class="proxy-panel">
           <el-row :gutter="16">
             <el-col :span="10">
               <el-card shadow="never">
@@ -145,8 +189,20 @@ watch(selectedEndpoint, () => {
               </el-card>
             </el-col>
           </el-row>
-        </template>
-      </div>
+        </div>
+        <!-- 双区块均无内容时（理论不出现，API 校验已拦截） -->
+        <div v-if="!plugin.iframe_url && !plugin.endpoints?.length" class="embed-empty">
+          <el-empty description="插件未配置嵌入页面或 API 端点" />
+        </div>
+      </template>
+
+      <!-- native 类型：嵌入后端托管的内嵌静态页 -->
+      <iframe
+        v-else-if="plugin.type === 'native'"
+        :src="nativeSrc(plugin)"
+        class="vm-iframe"
+        title="plugin"
+      />
     </template>
     <div v-else class="plugin-empty">
       <el-empty :description="notFound ? '插件不存在或无权访问' : '正在加载...'" />
@@ -157,14 +213,34 @@ watch(selectedEndpoint, () => {
 <style scoped>
 .plugin-page {
   height: 100%;
+  overflow-y: auto;
 }
 
 .plugin-empty,
-.proxy-empty {
+.embed-empty {
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
   height: 100%;
+}
+
+.embed-hint {
+  margin-top: 8px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+}
+
+.access-embed {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.access-embed .vm-iframe {
+  flex: 1;
 }
 
 .proxy-panel {
