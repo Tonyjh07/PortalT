@@ -44,7 +44,7 @@ func setupProxy(t *testing.T, plugin *domain.Plugin, upstream http.HandlerFunc) 
 func TestPluginProxy_ForwardAndIdentity(t *testing.T) {
 	seen := make(map[string]string)
 	plugin := &domain.Plugin{
-		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeAccess, IsActive: true,
 		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info", Name: "信息"}},
 	}
 	r, _ := setupProxy(t, plugin, func(w http.ResponseWriter, req *http.Request) {
@@ -72,7 +72,7 @@ func TestPluginProxy_HeaderPerms_UsesRuntimeSet(t *testing.T) {
 	// 装载角色矩阵时，X-PortalT-Perms 取矩阵内容（单一事实来源）
 	seen := make(chan string, 1)
 	plugin := &domain.Plugin{
-		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeAccess, IsActive: true,
 		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
 	}
 	repo := memory.NewPluginRepository()
@@ -101,7 +101,7 @@ func TestPluginProxy_HeaderPerms_UsesRuntimeSet(t *testing.T) {
 
 func TestPluginProxy_EndpointWhitelist(t *testing.T) {
 	plugin := &domain.Plugin{
-		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p1", Name: "脚本工具", Type: domain.PluginTypeAccess, IsActive: true,
 		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
 	}
 	r, _ := setupProxy(t, plugin, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -119,7 +119,7 @@ func TestPluginProxy_EndpointWhitelist(t *testing.T) {
 
 func TestPluginProxy_DisabledAndWrongType(t *testing.T) {
 	plugin := &domain.Plugin{
-		ID: "p1", Name: "停用", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p1", Name: "停用", Type: domain.PluginTypeAccess, IsActive: true,
 		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
 	}
 	r, _ := setupProxy(t, plugin, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -127,9 +127,9 @@ func TestPluginProxy_DisabledAndWrongType(t *testing.T) {
 	w := proxyDo(t, r, http.MethodGet, "/proxy/p1/api/info")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 
-	iframe := &domain.Plugin{ID: "p2", Name: "嵌入", Type: domain.PluginTypeIframe, IsActive: true}
+	native := &domain.Plugin{ID: "p2", Name: "原生", Type: domain.PluginTypeNative, IsActive: true}
 	repo := memory.NewPluginRepository()
-	require.NoError(t, repo.Save(iframe))
+	require.NoError(t, repo.Save(native))
 	h := NewPluginProxyHandler(repo)
 	r2 := gin.New()
 	r2.Use(func(c *gin.Context) { c.Set("auth.user", &domain.User{Role: domain.RoleAdmin}); c.Next() })
@@ -140,7 +140,7 @@ func TestPluginProxy_DisabledAndWrongType(t *testing.T) {
 
 func TestPluginProxy_PermissionAndUnreachable(t *testing.T) {
 	plugin := &domain.Plugin{
-		ID: "p1", Name: "受限", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p1", Name: "受限", Type: domain.PluginTypeAccess, IsActive: true,
 		Permission: "plugin:view",
 		Endpoints:  []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
 	}
@@ -157,7 +157,7 @@ func TestPluginProxy_PermissionAndUnreachable(t *testing.T) {
 
 	// 服务不可达 → 502
 	plugin2 := &domain.Plugin{
-		ID: "p2", Name: "离线", Type: domain.PluginTypeProxy, IsActive: true,
+		ID: "p2", Name: "离线", Type: domain.PluginTypeAccess, IsActive: true,
 		ApiURL:    "http://127.0.0.1:1",
 		Endpoints: []domain.PluginEndpoint{{Method: "GET", Path: "/api/info"}},
 	}

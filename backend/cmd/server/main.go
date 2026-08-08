@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,19 +21,12 @@ import (
 	"portalt/internal/api"
 	"portalt/internal/api/middleware"
 	"portalt/internal/api/v1"
+	"portalt/internal/domain"
 	"portalt/internal/domain/services"
+	"portalt/internal/pluginhost"
 	"portalt/internal/plugins"
-	"portalt/internal/plugins/examples/cron"
-	"portalt/internal/plugins/examples/esxiadmin"
+	"portalt/internal/ports"
 )
-
-// builtinPlugins 内置原生插件列表（示例插件见 internal/plugins/examples）。
-func builtinPlugins() []plugins.Plugin {
-	return []plugins.Plugin{
-		esxiadmin.New(),
-		cron.New(),
-	}
-}
 
 const (
 	// AppVersion 当前版本号
@@ -93,18 +87,26 @@ func main() {
 	// 虚拟机资源级授权仓储
 	vmAccessRepo := gormstore.NewVMAccessRepository(db)
 
-	// 原生插件注册表（启动时注册完毕；同步到 plugins 表供菜单与权限管理）
+	// Caddy 插件规则管理器（access 插件落盘 plugins.d/ 并 reload；
+	// PLUGIN_CADDY_DIR 为空 = 本地 dev 无 Caddy，仅接受不落盘不报错）
+	caddy := pluginhost.NewCaddyManager(
+		envOr("PLUGIN_CADDY_DIR", ""),
+		envOr("CADDY_RELOAD_CMD", ""),
+	)
+
+	// 默认 access 插件引导（esxi-admin：ESXi 管理入口 + 反代规则默认值）
+	if err := seedDefaultAccessPlugins(ctx, pluginRepo); err != nil {
+		log.Fatalf("默认插件引导失败: %v", err)
+	}
+	// 启动时把启用且含规则的 access 插件写入 plugins.d 并 reload 一次
+	if all, err := pluginRepo.FindAll(); err != nil {
+		log.Printf("警告: 读取插件列表失败: %v", err)
+	} else if err := caddy.WriteAll(all); err != nil {
+		log.Printf("警告: Caddy 插件规则同步失败: %v", err)
+	}
+
+	// 原生插件注册表（当前为空：进程化 native 在插件系统重构 Phase C 落地）
 	native := plugins.NewRegistry()
-	for _, p := range builtinPlugins() {
-		if err := native.Register(p); err != nil {
-			log.Fatalf("原生插件注册失败: %v", err)
-		}
-	}
-	if n, err := services.SyncNativePlugins(ctx, pluginRepo, native); err != nil {
-		log.Printf("警告: 原生插件同步失败: %v", err)
-	} else if n > 0 {
-		log.Printf("原生插件已同步: %d 个", n)
-	}
 
 	// 虚拟化提供者与 VM 服务
 	provider, err := adapters.NewVirtualizationProvider(envOr("VIRT_PROVIDER", "mock"), map[string]string{
@@ -139,12 +141,16 @@ func main() {
 		Auth:        v1.NewAuthHandler(authProvider, tm),
 		VM:          v1.NewVMHandler(vmService, vmAccessRepo),
 		Menu:        v1.NewMenuHandler(pluginRepo),
-		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo),
+		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo, caddy),
 		PluginProxy: v1.NewPluginProxyHandler(pluginRepo),
 		User:        v1.NewUserHandler(userRepo, roleRepo, vmAccessRepo),
 		Role:        v1.NewRoleHandler(roleRepo, permRepo, roleLoader),
 		VMAccessH:   v1.NewVMAccessHandler(vmAccessRepo),
 		Guac:        guacHandler,
+		Platform: v1.NewPlatformHandler(
+			envOr("VIRT_PROVIDER", "mock"),
+			envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
+		),
 		Native:      native,
 		NativeDeps: plugins.Deps{
 			Provider: envOr("VIRT_PROVIDER", "mock"),
@@ -217,4 +223,33 @@ func envSeconds(key string, fallback int64) time.Duration {
 		}
 	}
 	return time.Duration(fallback) * time.Second
+}
+
+// seedDefaultAccessPlugins 幂等引导默认 access 插件（esxi-admin）。
+// 已存在时：仅当类型为 access 且 CaddyRules 为空时回填默认反代规则
+// （管理员配置优先，不覆盖）；记录不存在则创建。
+func seedDefaultAccessPlugins(ctx context.Context, repo ports.PluginRepository) error {
+	existing, err := repo.FindByID("esxi-admin")
+	if errors.Is(err, ports.ErrNotFound) {
+		return repo.Save(&domain.Plugin{
+			ID:         "esxi-admin",
+			Name:       "ESXi 管理",
+			Icon:       "mdi:server-network",
+			Route:      "/esxi-admin",
+			Type:       domain.PluginTypeAccess,
+			IframeURL:  "/esxi/ui/",
+			CaddyRules: pluginhost.DefaultESXIAdminCaddyRules,
+			Permission: domain.PERM_ESXI_ADMIN_USE,
+			SortOrder:  90,
+			IsActive:   true,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	if domain.NormalizePluginType(existing.Type) == domain.PluginTypeAccess && existing.CaddyRules == "" {
+		existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
+		return repo.Save(existing)
+	}
+	return nil
 }

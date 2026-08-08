@@ -25,8 +25,8 @@ const (
 	// PERM_USER_MANAGE 管理用户
 	PERM_USER_MANAGE = "user:manage"
 	// PERM_ESXI_ADMIN_USE 访问 ESXi 管理界面（esxi-admin 插件）。
-	// 控制插件接口调用（nativeGate 强制校验）；菜单入口组级仍要求通用
-	// plugin:view（/menu、/plugins/native 组），默认 admin 双持有，自定义角色
+	// 控制插件访问（access 代理/页面经 CanAccess 校验）；菜单入口组级仍要求通用
+	// plugin:view（/menu），默认 admin 双持有，自定义角色
 	// 最小授权时建议同时授予 plugin:view。
 	PERM_ESXI_ADMIN_USE = "esxi-admin:use"
 )

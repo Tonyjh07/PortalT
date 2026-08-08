@@ -26,6 +26,7 @@ type HandlerSet struct {
 	User        *v1.UserHandler
 	Role        *v1.RoleHandler
 	Guac        v1.GuacProxy
+	Platform    *v1.PlatformHandler
 
 	// 原生插件（可选，nil 时相关路由不挂载）
 	Native     *plugins.Registry
@@ -78,6 +79,11 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 
 		// 动态菜单（plugin:view）
 		protected.GET("/menu", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW), hs.Menu.Menu)
+
+		// 平台信息（plugin:view，前端插件页判断接入状态）
+		if hs.Platform != nil {
+			protected.GET("/platform", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW), hs.Platform.Info)
+		}
 
 		// 插件管理（plugin:manage，管理员）
 		plugins := protected.Group("/plugins", middleware.RequirePermission(domain.PERM_PLUGIN_MANAGE))

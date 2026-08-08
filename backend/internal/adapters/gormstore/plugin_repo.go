@@ -13,21 +13,24 @@ import (
 )
 
 // pluginModel 插件数据库模型，映射 plugins 表。
-// endpoints 以 JSON 数组文本存储（SQLite TEXT / PostgreSQL TEXT 均可）。
+// endpoints / manifest_json 以 JSON 文本存储（SQLite TEXT / PostgreSQL TEXT 均可）。
 type pluginModel struct {
-	ID         string    `gorm:"primaryKey"`
-	Name       string    `gorm:"not null"`
-	Icon       string    `gorm:"not null"`
-	Route      string    `gorm:"uniqueIndex;not null"`
-	Type       string    `gorm:"not null;default:iframe"`
-	IframeURL  string    `gorm:"column:iframe_url;not null"`
-	ApiURL     string    `gorm:"column:api_url;not null"`
-	Endpoints  string    `gorm:"not null"`
-	Permission string    `gorm:"not null"`
-	SortOrder  int       `gorm:"column:sort_order;not null"`
-	IsActive   bool      `gorm:"column:is_active;not null"`
-	CreatedAt  time.Time `gorm:"autoCreateTime"`
-	UpdatedAt  time.Time `gorm:"autoUpdateTime"`
+	ID           string    `gorm:"primaryKey"`
+	Name         string    `gorm:"not null"`
+	Icon         string    `gorm:"not null"`
+	Route        string    `gorm:"uniqueIndex;not null"`
+	Type         string    `gorm:"not null;default:access"`
+	IframeURL    string    `gorm:"column:iframe_url;not null"`
+	ApiURL       string    `gorm:"column:api_url;not null"`
+	Endpoints    string    `gorm:"not null"`
+	CaddyRules   string    `gorm:"column:caddy_rules;not null"`
+	Permission   string    `gorm:"not null"`
+	SortOrder    int       `gorm:"column:sort_order;not null"`
+	IsActive     bool      `gorm:"column:is_active;not null"`
+	Status       string    `gorm:"not null"`
+	ManifestJSON string    `gorm:"column:manifest_json;not null"`
+	CreatedAt    time.Time `gorm:"autoCreateTime"`
+	UpdatedAt    time.Time `gorm:"autoUpdateTime"`
 }
 
 // TableName 指定表名。
@@ -36,16 +39,19 @@ func (pluginModel) TableName() string { return "plugins" }
 // ToDomain 将数据库模型转换为领域实体。
 func (m *pluginModel) ToDomain() (*domain.Plugin, error) {
 	p := &domain.Plugin{
-		ID:         m.ID,
-		Name:       m.Name,
-		Icon:       m.Icon,
-		Route:      m.Route,
-		Type:       domain.NormalizePluginType(domain.PluginType(m.Type)),
-		IframeURL:  m.IframeURL,
-		ApiURL:     m.ApiURL,
-		Permission: m.Permission,
-		SortOrder:  m.SortOrder,
-		IsActive:   m.IsActive,
+		ID:           m.ID,
+		Name:         m.Name,
+		Icon:         m.Icon,
+		Route:        m.Route,
+		Type:         domain.NormalizePluginType(domain.PluginType(m.Type)),
+		IframeURL:    m.IframeURL,
+		ApiURL:       m.ApiURL,
+		CaddyRules:   m.CaddyRules,
+		Permission:   m.Permission,
+		SortOrder:    m.SortOrder,
+		IsActive:     m.IsActive,
+		Status:       m.Status,
+		ManifestJSON: m.ManifestJSON,
 	}
 	if m.Endpoints != "" {
 		if err := json.Unmarshal([]byte(m.Endpoints), &p.Endpoints); err != nil {
@@ -69,9 +75,12 @@ func (m *pluginModel) FromDomain(p *domain.Plugin) error {
 	m.IframeURL = p.IframeURL
 	m.ApiURL = p.ApiURL
 	m.Endpoints = string(b)
+	m.CaddyRules = p.CaddyRules
 	m.Permission = p.Permission
 	m.SortOrder = p.SortOrder
 	m.IsActive = p.IsActive
+	m.Status = p.Status
+	m.ManifestJSON = p.ManifestJSON
 	return nil
 }
 
@@ -94,7 +103,7 @@ func (r *PluginRepository) Save(p *domain.Plugin) error {
 	m.FromDomain(p)
 	return r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "icon", "route", "type", "iframe_url", "api_url", "endpoints", "permission", "sort_order", "is_active"}),
+		DoUpdates: clause.AssignmentColumns([]string{"name", "icon", "route", "type", "iframe_url", "api_url", "endpoints", "caddy_rules", "permission", "sort_order", "is_active", "status", "manifest_json"}),
 	}).Create(&m).Error
 }
 

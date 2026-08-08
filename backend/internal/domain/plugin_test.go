@@ -59,6 +59,6 @@ func TestPlugin_IsEnabled(t *testing.T) {
 
 func TestPlugin_JSONFields(t *testing.T) {
 	p := testPlugin(true, PERM_PLUGIN_VIEW)
-	json := `{"id":"p-1","name":"Home Assistant","icon":"mdi:home","route":"/ha","type":"","iframe_url":"https://ha.local","api_url":"","endpoints":null,"permission":"plugin:view","sort_order":1,"is_active":true}`
+	json := `{"id":"p-1","name":"Home Assistant","icon":"mdi:home","route":"/ha","type":"","iframe_url":"https://ha.local","api_url":"","endpoints":null,"caddy_rules":"","permission":"plugin:view","sort_order":1,"is_active":true,"status":"","manifest_json":""}`
 	assert.Equal(t, json, string(mustMarshal(t, p)))
 }

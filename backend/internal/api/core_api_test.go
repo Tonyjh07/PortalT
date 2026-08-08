@@ -199,7 +199,8 @@ func TestPlugin_CRUD_Admin(t *testing.T) {
 
 	// 创建
 	w := doRequest(t, env.router, http.MethodPost, "/api/v1/plugins", map[string]any{
-		"name": "Proxmox", "route": "/pve", "sort_order": 5, "is_active": true,
+		"name": "Proxmox", "route": "/pve", "iframe_url": "https://pve.local",
+		"sort_order": 5, "is_active": true,
 	}, token)
 	require.Equal(t, http.StatusOK, w.Code)
 	var created struct {
@@ -210,7 +211,7 @@ func TestPlugin_CRUD_Admin(t *testing.T) {
 
 	// 更新
 	w = doRequest(t, env.router, http.MethodPut, "/api/v1/plugins/"+created.Data.ID, map[string]any{
-		"name": "Proxmox VE", "route": "/pve", "is_active": false,
+		"name": "Proxmox VE", "route": "/pve", "iframe_url": "https://pve.local", "is_active": false,
 	}, token)
 	require.Equal(t, http.StatusOK, w.Code)
 	var updated struct {

@@ -19,7 +19,8 @@ func TestPluginRepository_Crud(t *testing.T) {
 
 	plugin := &domain.Plugin{
 		ID: "p-1", Name: "Home Assistant", Icon: "mdi:home", Route: "/ha",
-		IframeURL: "https://ha.local", Permission: "", SortOrder: 2, IsActive: true,
+		Type: domain.PluginTypeAccess, IframeURL: "https://ha.local",
+		Permission: "", SortOrder: 2, IsActive: true,
 	}
 	require.NoError(t, repo.Save(plugin))
 

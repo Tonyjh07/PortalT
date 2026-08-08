@@ -31,6 +31,15 @@ func OK(c *gin.Context, data any) {
 	})
 }
 
+// OKWithMessage 成功响应但携带自定义提示（如"规则已保存，但 reload 失败"）。
+func OKWithMessage(c *gin.Context, message string, data any) {
+	c.JSON(http.StatusOK, gin.H{
+		"code":    CodeSuccess,
+		"message": message,
+		"data":    data,
+	})
+}
+
 // Error 统一错误响应：{code, message}，可附 details。
 func Error(c *gin.Context, httpStatus, code int, message string, details ...string) {
 	body := gin.H{

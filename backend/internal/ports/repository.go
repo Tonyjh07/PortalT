@@ -99,3 +99,14 @@ type VMAccessRepository interface {
 	// DeleteForUser 删除用户的全部授权记录（删除用户时清理）
 	DeleteForUser(userID string) error
 }
+
+// CaddyApplier 插件 Caddy 规则应用器（access 插件专属，由 pluginhost.CaddyManager 实现）。
+// 提供落盘与 reload 两个步骤，便于调用方区分"落盘失败"与"reload 失败"。
+type CaddyApplier interface {
+	// Apply 写入/更新某插件的规则文件；rules 为空时等同 Remove。落盘失败返回错误。
+	Apply(id string, rules string) error
+	// Remove 删除某插件的规则文件（文件不存在时静默成功）。
+	Remove(id string) error
+	// Reload 触发 Caddy 热加载；命令未配置或不可用时静默成功（仅落盘）。
+	Reload() error
+}

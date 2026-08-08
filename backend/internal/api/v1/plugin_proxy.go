@@ -51,8 +51,8 @@ func (h *PluginProxyHandler) Proxy(c *gin.Context) {
 		response.Error(c, http.StatusForbidden, response.CodeForbidden, "插件已停用")
 		return
 	}
-	if domain.NormalizePluginType(plugin.Type) != domain.PluginTypeProxy {
-		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "该插件不是代理类型")
+	if domain.NormalizePluginType(plugin.Type) != domain.PluginTypeAccess {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "该插件不是 access 类型")
 		return
 	}
 	user := middleware.CurrentUser(c)
