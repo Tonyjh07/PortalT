@@ -11,6 +11,9 @@ PortalT 的插件机制收敛为**两类**，均为门户侧"菜单项 + 页面"
 > PluginHost 扫描 `PLUGINS_DIR` spawn/监督插件进程、gRPC 控制面握手 + HTTP 数据面反代、
 > fsnotify 热加载、崩溃自动重启、管理 API 生命周期（启用/停用/重启）。
 > 示例插件见 `backend/plugins/examples/hello/`。
+> **Phase 4 已实现**：部署脚本创建 `PLUGINS_DIR`、`/etc/caddy/plugins.d`；systemd 注入相关环境变量；
+> Caddyfile 主站 `import plugins.d/*.caddy`；管理界面 native 行轮询运行态 + 启用/停用/重启按钮、
+> access 行显示 Caddy 规则落盘状态（`caddy_applied`）；更新脚本备份插件目录。
 
 ## access 插件：纯配置型
 

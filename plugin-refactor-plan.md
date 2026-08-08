@@ -1,7 +1,7 @@
 # PortalT 插件系统重构计划
 
-> 状态：**Phase 1、2、3 已完成（access 收敛 + Caddy 交互 + native 进程化）**；Phase 4（部署 + 前端增强 + 文档）
-> 进行中。本文档是重构的设计蓝图，实施结果以
+> 状态：**Phase 1、2、3、4 已完成（access 收敛 + Caddy 交互 + native 进程化 + 部署闭环 + 前端增强）**；
+> 本文档是重构的设计蓝图，实施结果以
 > `docs/plugins.md`、`docs/interfaces.md`、`About.md` 进度表为准。
 >
 > 决策前提（已确认）：
@@ -228,10 +228,11 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
      Caddyfile 主文件加 `import plugins.d/*.caddy`。
   2. `deploy/update.sh`：插件目录备份 / 回滚。
   3. 前端 `plugins-admin.vue`：native 行显示运行状态（轮询 health）、启用 / 禁用 / 重启按钮；
-     access 行显示 Caddy 规则状态。
+     access 行显示 Caddy 规则状态（后端计算 `caddy_applied` 字段）。
   4. 文档全量同步：`docs/plugins.md`、`docs/interfaces.md`、`.env.example`（新变量）、
      `About.md` 进度表、`docs/README.md` 索引。
 - 验收：生产部署一键生效；管理界面可管理两类插件；文档与实现一致。
+- 状态：**已完成**（install.sh 创建 PLUGINS_DIR 与 systemd env、构建官方插件循环、Caddyfile 加 import plugins.d/*.caddy、/etc/caddy/plugins.d 目录；update.sh 插件备份/回滚/重建；前端 Caddy 规则落盘状态 + native 轮询启停重启；docs 与 About.md 同步；`go test ./... -count=1` 全绿 + `go build/vet` 干净 + `npm run build` 通过）。
 
 ## 8. 风险与关键点
 

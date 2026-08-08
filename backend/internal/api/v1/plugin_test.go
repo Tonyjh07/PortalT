@@ -99,6 +99,11 @@ func (s *stubCaddy) Reload() error {
 	return s.relErr
 }
 
+func (s *stubCaddy) HasRuleFile(id string) bool {
+	_, ok := s.applied[id]
+	return ok
+}
+
 func pluginDo(t *testing.T, r *gin.Engine, method, path string, body any) *httptest.ResponseRecorder {
 	t.Helper()
 	var buf bytes.Buffer
@@ -225,6 +230,42 @@ func TestPlugin_List(t *testing.T) {
 	require.Len(t, body.Data, 2)
 }
 
+func TestPlugin_List_CaddyApplied(t *testing.T) {
+	c := &stubCaddy{}
+	r, repo, _ := setupPluginWithCaddy(t, c)
+	access := &domain.Plugin{ID: "a1", Name: "access", Route: "/a", Type: domain.PluginTypeAccess, IsActive: true}
+	native := &domain.Plugin{ID: "n1", Name: "native", Route: "/n", Type: domain.PluginTypeNative, IsActive: true}
+	require.NoError(t, repo.Save(access))
+	require.NoError(t, repo.Save(native))
+
+	// 先 apply 使规则文件在桩中"落盘"
+	require.NoError(t, c.Apply("a1", "handle /a { respond 200 }"))
+
+	w := pluginDo(t, r, http.MethodGet, "/plugins", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var raw struct {
+		Data []json.RawMessage `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	require.Len(t, raw.Data, 2)
+
+	for _, item := range raw.Data {
+		var base struct {
+			ID           string `json:"id"`
+			Type         string `json:"type"`
+			CaddyApplied bool   `json:"caddy_applied"`
+		}
+		require.NoError(t, json.Unmarshal(item, &base))
+		switch base.ID {
+		case "a1":
+			assert.True(t, base.CaddyApplied, "access 插件有规则文件时应为 true")
+		case "n1":
+			assert.False(t, base.CaddyApplied, "native 插件恒为 false")
+		}
+	}
+}
+
 // setupPluginWithCaddy 组装带 Caddy 桩的插件管理路由。
 func setupPluginWithCaddy(t *testing.T, c *stubCaddy) (*gin.Engine, *memory.PluginRepository, *stubCaddy) {
 	t.Helper()
@@ -234,6 +275,7 @@ func setupPluginWithCaddy(t *testing.T, c *stubCaddy) (*gin.Engine, *memory.Plug
 	r := gin.New()
 	r.POST("/plugins", handler.Create)
 	r.PUT("/plugins/:id", handler.Update)
+	r.GET("/plugins", handler.List)
 	r.DELETE("/plugins/:id", handler.Delete)
 	return r, repo, c
 }

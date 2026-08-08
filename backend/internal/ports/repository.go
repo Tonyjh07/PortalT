@@ -110,6 +110,8 @@ type CaddyApplier interface {
 	Remove(id string) error
 	// Reload 触发 Caddy 热加载；命令未配置或不可用时静默成功（仅落盘）。
 	Reload() error
+	// HasRuleFile 判断某插件的规则文件当前是否已落盘（access 插件，供管理界面展示状态）。
+	HasRuleFile(id string) bool
 }
 
 // NativeHost native 插件进程宿主接口（由 pluginhost.Manager 实现）。

@@ -140,6 +140,55 @@ ls -1t "$DEPLOY_DIR"/portalt-server.bak.* 2>/dev/null | tail -n +3 | xargs -r su
 ls -1dt "$DEPLOY_DIR"/frontend/.output.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
 
 # ============================================================
+# 4.5 插件目录（备份 → 重建官方插件 → 失败回滚）
+# ============================================================
+header "插件目录"
+PLUGINS_DIR="$DEPLOY_DIR/plugins"
+if grep -q '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env"; then
+    PLUGINS_DIR="$(grep '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env" | head -1 | cut -d= -f2-)"
+fi
+sudo mkdir -p "$PLUGINS_DIR"
+
+# 备份现有插件目录（官方插件重建前；失败时回滚，用户插件不丢失）
+PLUGINS_BACKUP="$PLUGINS_DIR.bak.$(date +%Y%m%d%H%M%S)"
+if [ -n "$(sudo ls -A "$PLUGINS_DIR" 2>/dev/null | head -1)" ]; then
+    sudo cp -a "$PLUGINS_DIR" "$PLUGINS_BACKUP"
+    ok "已备份插件目录 ($(basename "$PLUGINS_BACKUP"))"
+fi
+
+BUILD_FAILED=0
+for pdir in "$REPO_DIR"/backend/plugins/*/; do
+    [ -d "$pdir" ] || continue
+    id="$(basename "$pdir")"
+    [ "$id" = "examples" ] && continue
+    if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
+        info "重建官方插件 $id ..."
+        sudo mkdir -p "$PLUGINS_DIR/$id"
+        if ! (cd "$pdir" && CGO_ENABLED=0 go build -o "$PLUGINS_DIR/$id/plugin" ./cmd); then
+            warn "官方插件 $id 构建失败"
+            BUILD_FAILED=1
+        fi
+    fi
+done
+
+if [ "$BUILD_FAILED" = "1" ]; then
+    if [ -d "$PLUGINS_BACKUP" ]; then
+        warn "插件重建失败，回滚插件目录 ..."
+        sudo rm -rf "$PLUGINS_DIR"
+        sudo mv "$PLUGINS_BACKUP" "$PLUGINS_DIR"
+        error "插件目录已回滚（查看构建输出）"
+    else
+        error "插件构建失败（无备份可回滚）"
+    fi
+fi
+# 清理旧插件备份（保留最近 2 份），无论构建成功与否均执行
+ls -1dt "$DEPLOY_DIR"/plugins.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
+
+if [ "$BUILD_FAILED" != "1" ]; then
+    ok "插件目录就绪: $PLUGINS_DIR"
+fi
+
+# ============================================================
 # 5. 摘要
 # ============================================================
 header "更新完成"

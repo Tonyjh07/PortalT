@@ -332,6 +332,13 @@ func (h *PluginHandler) Delete(c *gin.Context) {
 	response.OK(c, nil)
 }
 
+// pluginListItem 插件列表项：在领域实体基础上附加计算字段（供管理界面展示）。
+type pluginListItem struct {
+	*domain.Plugin
+	// CaddyApplied access 插件：规则文件当前是否已落盘（其余类型恒为 false）
+	CaddyApplied bool `json:"caddy_applied"`
+}
+
 // List GET /api/v1/plugins
 // 返回全部插件（含停用），供管理界面展示。
 func (h *PluginHandler) List(c *gin.Context) {
@@ -340,7 +347,15 @@ func (h *PluginHandler) List(c *gin.Context) {
 		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询插件失败")
 		return
 	}
-	response.OK(c, plugins)
+	items := make([]pluginListItem, 0, len(plugins))
+	for _, p := range plugins {
+		applied := false
+		if h.caddy != nil && domain.NormalizePluginType(p.Type) == domain.PluginTypeAccess {
+			applied = h.caddy.HasRuleFile(p.ID)
+		}
+		items = append(items, pluginListItem{Plugin: p, CaddyApplied: applied})
+	}
+	response.OK(c, items)
 }
 
 // Restart POST /api/v1/plugins/:id/restart

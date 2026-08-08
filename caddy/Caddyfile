@@ -146,6 +146,10 @@
 	# 静态资源与反代响应压缩（低带宽下加载提速；WS 升级不受影响）。
 	# 注：仅用 gzip——本机 caddy 版本未编译 brotli encoder（http.encoders.br 未注册）
 	encode gzip
+	# access 插件的 Caddy 规则（<PLUGIN_CADDY_DIR>/<id>.caddy，PortalT 后端落盘）。
+	# 空 glob 不是错误，目录无规则文件时等效于不存在；插件 handle 须在 esxi_proxy_routes
+	# 的兜底 handle 之前求值，故在此导入。规则内容见 docs/plugins.md。
+	import plugins.d/*.caddy
 	import esxi_proxy_routes
 }
 

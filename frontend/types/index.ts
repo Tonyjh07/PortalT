@@ -66,6 +66,8 @@ export interface Plugin {
   status: string
   /** native 插件 manifest 缓存 */
   manifest_json: string
+  /** access 插件 Caddy 规则是否已落盘（后端计算字段，native 恒为 false） */
+  caddy_applied?: boolean
 }
 
 export interface MenuItem extends Plugin {

@@ -63,6 +63,16 @@ const manifest = computed<Record<string, any> | null>(() => {
   }
 })
 
+const hasNative = computed(() => plugins.value.some((p) => p.type === 'native'))
+
+function caddyStatus(row: Plugin): { text: string; type: string } {
+  if (row.type !== 'access') return { text: '-', type: 'info' }
+  if (row.caddy_applied) return { text: '已生效', type: 'success' }
+  if (row.caddy_rules && !row.is_active) return { text: '停用', type: 'info' }
+  if (row.caddy_rules) return { text: '待重载', type: 'warning' }
+  return { text: '无规则', type: 'info' }
+}
+
 function emptyEndpoint(): PluginEndpoint {
   return { method: 'GET', path: '/api/info', name: '', description: '' }
 }
@@ -82,6 +92,30 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+let pollTimer: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  load()
+  pollTimer = setInterval(() => {
+    if (hasNative.value) load()
+  }, 15000)
+})
+onUnmounted(() => {
+  if (pollTimer) clearInterval(pollTimer)
+})
+
+async function toggleActive(row: Plugin) {
+  const next = !row.is_active
+  await api(`/plugins/${row.id}`, { method: 'PUT', body: { is_active: next } })
+  ElMessage.success(next ? '已启用' : '已停用')
+  await load()
+}
+
+async function restartNative(row: Plugin) {
+  await api(`/plugins/${row.id}/restart`, { method: 'POST' })
+  ElMessage.success('重启指令已发送')
+  await load()
 }
 
 function openCreate() {
@@ -171,7 +205,6 @@ function removeEndpoint(i: number) {
   form.endpoints.splice(i, 1)
 }
 
-onMounted(load)
 </script>
 
 <template>
@@ -213,11 +246,23 @@ onMounted(load)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="sort_order" label="排序" width="80" />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="Caddy 规则" width="80">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">查看 / 编辑</el-button>
-            <el-button link type="danger" :disabled="row.type === 'native'" @click="remove(row)">删除</el-button>
+            <el-tag v-if="row.type === 'access'" :type="caddyStatus(row).type" size="small">{{ caddyStatus(row).text }}</el-tag>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="sort_order" label="排序" width="80" />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <template v-if="row.type === 'native' && canManage">
+              <el-button link :type="row.is_active ? 'warning' : 'success'" @click="toggleActive(row)">{{ row.is_active ? '停用' : '启用' }}</el-button>
+              <el-button link type="primary" :disabled="!row.is_active" @click="restartNative(row)">重启</el-button>
+            </template>
+            <template v-else>
+              <el-button link type="primary" @click="openEdit(row)">{{ row.type === 'native' ? '查看' : '查看 / 编辑' }}</el-button>
+              <el-button link type="danger" :disabled="row.type === 'native'" @click="remove(row)">删除</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>

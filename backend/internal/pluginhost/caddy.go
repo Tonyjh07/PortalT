@@ -269,6 +269,15 @@ func (m *CaddyManager) WriteAll(plugins []*domain.Plugin) error {
 	return m.Reload()
 }
 
+// HasRuleFile 判断某插件的规则文件当前是否已落盘。未配置规则目录或文件不存在返回 false。
+func (m *CaddyManager) HasRuleFile(id string) bool {
+	if m == nil || m.rulesDir == "" {
+		return false
+	}
+	_, err := os.Stat(m.filePath(id))
+	return err == nil
+}
+
 // Reload 执行 reload 命令；命令未配置时静默返回（本地 dev 无 Caddy）。
 func (m *CaddyManager) Reload() error {
 	if m == nil || m.reloadCmd == "" {

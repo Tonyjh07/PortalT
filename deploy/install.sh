@@ -280,7 +280,7 @@ fi
 # 10. 部署文件
 # ============================================================
 header "部署文件"
-sudo mkdir -p "$DEPLOY_DIR"/{frontend,migrations,logs}
+sudo mkdir -p "$DEPLOY_DIR"/{frontend,migrations,logs,plugins}
 sudo chmod 700 "$DEPLOY_DIR"
 
 sudo cp "$BACKEND_BIN" "$DEPLOY_DIR/portalt-server"
@@ -293,6 +293,23 @@ ok "前端产物已部署"
 
 sudo cp -a "$REPO_DIR/backend/migrations/." "$DEPLOY_DIR/migrations/"
 ok "数据库迁移文件已部署"
+
+# 官方 submodule 插件产物构建：把 backend/plugins/<id>/ 下的官方插件构建到 PLUGINS_DIR/<id>/
+# （当前无官方 native 插件，循环为空；用户插件直接投放 PLUGINS_DIR 预编译产物，不经此步）
+for pdir in "$REPO_DIR"/backend/plugins/*/; do
+    [ -d "$pdir" ] || continue
+    id="$(basename "$pdir")"
+    [ "$id" = "examples" ] && continue
+    if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
+        info "构建官方插件 $id ..."
+        sudo mkdir -p "$DEPLOY_DIR/plugins/$id"
+        if (cd "$pdir" && CGO_ENABLED=0 go build -o "$DEPLOY_DIR/plugins/$id/plugin" ./cmd); then
+            ok "官方插件 $id 已构建到 PLUGINS_DIR/$id/plugin"
+        else
+            warn "官方插件 $id 构建失败（跳过，可在更新时重试）"
+        fi
+    fi
+done
 
 cat > /tmp/portalt.deployed <<EOF
 DEPLOY_DIR=$DEPLOY_DIR
@@ -326,6 +343,12 @@ EOF
     [ -n "$ESXI_WEB_URL" ] && echo "ESXI_WEB_URL=$ESXI_WEB_URL" >> /tmp/portalt.env
 fi
 echo "GUACD_URL=$GUACD_URL" >> /tmp/portalt.env
+cat >> /tmp/portalt.env <<EOF
+# 插件系统（Phase 2-4）：native 运行时目录 + access 插件 Caddy 规则目录/reload 命令
+PLUGINS_DIR=$DEPLOY_DIR/plugins
+PLUGIN_CADDY_DIR=/etc/caddy/plugins.d
+CADDY_RELOAD_CMD=systemctl reload caddy
+EOF
 sudo mv /tmp/portalt.env "$DEPLOY_DIR/portalt.env"
 sudo chmod 600 "$DEPLOY_DIR/portalt.env"
 ok "portalt.env 已生成"
@@ -395,6 +418,8 @@ if [ "$USE_CADDY" = "1" ]; then
     [ -f "$REPO_DIR/caddy/Caddyfile" ] || error "仓库缺少 caddy/Caddyfile"
     sudo mkdir -p /etc/caddy
     sudo cp "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
+    # access 插件 Caddy 规则目录（Caddyfile 已 import plugins.d/*.caddy）
+    sudo mkdir -p /etc/caddy/plugins.d
 
     if systemctl list-unit-files caddy.service >/dev/null 2>&1; then
         # 系统包自带 caddy.service：drop-in 注入环境变量

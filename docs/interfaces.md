@@ -458,6 +458,7 @@ type PluginRepository interface {
 | is_active | bool | 是否启用 |
 | status | string | native 运行态：running/stopped/error/missing（宿主回写；access 恒为空） |
 | manifest_json | string | native：manifest 缓存（宿主自动同步） |
+| caddy_applied | bool | access：Caddy 规则是否已落盘（`GET /plugins` 列表响应计算字段，数据库不持久化） |
 
 业务方法：`CanAccess(user *User)`（启用 + 权限双检查）、`IsEnabled()`、`FindEndpoint(method, path)`（白名单匹配，路径忽略前导斜杠）、`IsValidPluginType` / `NormalizePluginType`（空→access）。
 
