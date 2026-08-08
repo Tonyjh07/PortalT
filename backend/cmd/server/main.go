@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"portalt/internal/adapters"
@@ -24,7 +26,6 @@ import (
 	"portalt/internal/domain"
 	"portalt/internal/domain/services"
 	"portalt/internal/pluginhost"
-	"portalt/internal/plugins"
 	"portalt/internal/ports"
 )
 
@@ -105,8 +106,19 @@ func main() {
 		log.Printf("警告: Caddy 插件规则同步失败: %v", err)
 	}
 
-	// 原生插件注册表（当前为空：进程化 native 在插件系统重构 Phase C 落地）
-	native := plugins.NewRegistry()
+	// 原生插件宿主：扫描 PLUGINS_DIR 下的 manifest，启动/重启 native 插件进程
+	// 并回写运行态。PLUGINS_DIR 为空 = 禁用态，反代路由恒挂载但一律 503。
+	pluginManager := pluginhost.NewManager(
+		envOr("PLUGINS_DIR", ""),
+		pluginRepo,
+		AppVersion,
+	)
+	if pluginManager.Enabled() {
+		if err := pluginManager.Start(ctx); err != nil {
+			log.Fatalf("原生插件宿主启动失败: %v", err)
+		}
+		log.Printf("原生插件宿主已启动（plugins dir: %s）", envOr("PLUGINS_DIR", ""))
+	}
 
 	// 虚拟化提供者与 VM 服务
 	provider, err := adapters.NewVirtualizationProvider(envOr("VIRT_PROVIDER", "mock"), map[string]string{
@@ -141,7 +153,7 @@ func main() {
 		Auth:        v1.NewAuthHandler(authProvider, tm),
 		VM:          v1.NewVMHandler(vmService, vmAccessRepo),
 		Menu:        v1.NewMenuHandler(pluginRepo),
-		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo, caddy),
+		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo, caddy, pluginManager),
 		PluginProxy: v1.NewPluginProxyHandler(pluginRepo),
 		User:        v1.NewUserHandler(userRepo, roleRepo, vmAccessRepo),
 		Role:        v1.NewRoleHandler(roleRepo, permRepo, roleLoader),
@@ -151,11 +163,7 @@ func main() {
 			envOr("VIRT_PROVIDER", "mock"),
 			envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
 		),
-		Native:      native,
-		NativeDeps: plugins.Deps{
-			Provider: envOr("VIRT_PROVIDER", "mock"),
-			WebURL:   envOr("ESXI_WEB_URL", deriveWebURL(envOr("VIRT_URL", envOr("VIRT_ESXI_URL", "")))),
-		},
+		NativeProxy: v1.NewNativeProxyHandler(pluginRepo, pluginManager),
 		PluginRepo:  pluginRepo,
 		Permissions: permRepo,
 	})
@@ -166,7 +174,28 @@ func main() {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	log.Printf("PortalT listening on %s", listenAddr)
+
+	// 优雅停机：等待 OS 信号（Ctrl+C / systemctl stop），
+	// 停止 HTTP 服务并逐个优雅停止插件进程（Shutdown RPC + kill 兜底），
+	// 避免 Linux 上停止服务后残留孤儿插件子进程。
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	go func() {
+		<-sigCtx.Done()
+		log.Println("收到退出信号，开始优雅停机...")
+		// 插件停机与 HTTP drain 分别计时，避免共享预算互相挤占
+		pluginCtx, pcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer pcancel()
+		pluginManager.Shutdown(pluginCtx)
+		httpCtx, hcancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer hcancel()
+		_ = srv.Shutdown(httpCtx)
+	}()
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		// 启动/运行期出错退出：同样要回收插件子进程，避免残留孤儿进程
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		pluginManager.Shutdown(shutdownCtx)
 		log.Fatalf("server exited: %v", err)
 	}
 }

@@ -1,0 +1,10 @@
+{
+  "$comment": "示例 native 插件 manifest。部署：把 plugin 可执行文件与 manifest.json 一同放入 PLUGINS_DIR/hello/。",
+  "id": "hello",
+  "name": "Hello 示例插件",
+  "icon": "mdi:hand-wave",
+  "route": "/hello",
+  "sort_order": 200,
+  "permission": "",
+  "health_interval_seconds": 5
+}

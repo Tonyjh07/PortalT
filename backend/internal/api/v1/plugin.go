@@ -25,11 +25,13 @@ type PluginHandler struct {
 	perms ports.PermissionRepository
 	// caddy Caddy 规则应用器（access 插件落盘与 reload；nil 时跳过）
 	caddy ports.CaddyApplier
+	// host native 插件进程宿主（native 生命周期：启用/停用/重启；nil 时无 native 能力）
+	host ports.NativeHost
 }
 
 // NewPluginHandler 创建插件处理器。
-func NewPluginHandler(plugins ports.PluginRepository, perms ports.PermissionRepository, caddy ports.CaddyApplier) *PluginHandler {
-	return &PluginHandler{plugins: plugins, perms: perms, caddy: caddy}
+func NewPluginHandler(plugins ports.PluginRepository, perms ports.PermissionRepository, caddy ports.CaddyApplier, host ports.NativeHost) *PluginHandler {
+	return &PluginHandler{plugins: plugins, perms: perms, caddy: caddy, host: host}
 }
 
 // validatePerm 校验插件声明的访问权限存在于权限字典。
@@ -169,6 +171,11 @@ func (h *PluginHandler) Create(c *gin.Context) {
 		id = auth.NewID()
 	}
 	plugin := req.toDomain(id)
+	if domain.NormalizePluginType(plugin.Type) == domain.PluginTypeNative {
+		response.Error(c, http.StatusBadRequest, response.CodeInvalidOperation,
+			"native 插件由宿主按 manifest 自动注册，不可手动创建")
+		return
+	}
 	if err := h.plugins.Save(plugin); err != nil {
 		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "注册插件失败")
 		return
@@ -184,15 +191,24 @@ func (h *PluginHandler) Create(c *gin.Context) {
 }
 
 // Update PUT /api/v1/plugins/:id
-// 更新插件全部业务字段。
+// 更新插件业务字段。native 插件仅允许修改权限与启用状态
+// （manifest 驱动字段不可改）；启用/停用经宿主 spawn/停进程。
 func (h *PluginHandler) Update(c *gin.Context) {
 	id := c.Param("id")
-	if _, err := h.plugins.FindByID(id); err != nil {
+	existing, err := h.plugins.FindByID(id)
+	if err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			response.Error(c, http.StatusNotFound, response.CodeNotFound, "插件不存在")
 			return
 		}
 		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询插件失败")
+		return
+	}
+
+	// native 插件：仅权限与启用状态可写，其余字段以 manifest 为准。
+	// 请求体最小化，避免被 access 的必要字段校验约束。
+	if domain.NormalizePluginType(existing.Type) == domain.PluginTypeNative {
+		h.updateNative(c, existing)
 		return
 	}
 
@@ -224,10 +240,78 @@ func (h *PluginHandler) Update(c *gin.Context) {
 	response.OK(c, plugin)
 }
 
+// nativeUpdateRequest native 插件更新请求体（仅权限与启用状态）。
+// Permission 用指针：未提供时不改动现有权限（避免只改启用状态时误清空声明权限）。
+type nativeUpdateRequest struct {
+	Permission *string `json:"permission"`
+	IsActive   *bool   `json:"is_active"`
+}
+
+// updateNative 处理 native 插件更新：仅应用权限与启用状态，
+// 启用/停用经宿主触发生命周期（spawn / 停进程）。
+func (h *PluginHandler) updateNative(c *gin.Context, existing *domain.Plugin) {
+	id := c.Param("id")
+	var req nativeUpdateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, response.CodeBadRequest, "请求参数错误", err.Error())
+		return
+	}
+	if req.Permission != nil {
+		if err := h.validatePerm(*req.Permission); err != nil {
+			response.Error(c, http.StatusBadRequest, response.CodeBadRequest, err.Error())
+			return
+		}
+		existing.Permission = *req.Permission
+	}
+
+	// 启用状态变更才触发生命周期（避免反复 spawn）
+	if req.IsActive != nil && existing.IsActive != *req.IsActive {
+		ctx := c.Request.Context()
+		if h.host == nil {
+			response.Error(c, http.StatusInternalServerError, response.CodeServerError,
+				"原生插件宿主未启用（未配置 PLUGINS_DIR）")
+			return
+		}
+		var lcErr error
+		if *req.IsActive {
+			lcErr = h.host.Enable(ctx, id)
+		} else {
+			lcErr = h.host.Disable(ctx, id)
+		}
+		if lcErr != nil {
+			response.Error(c, http.StatusInternalServerError, response.CodeServerError,
+				"插件生命周期操作失败: "+lcErr.Error())
+			return
+		}
+		// 宿主已落库 is_active；本地对象同步以便返回（防宿主实现不落库时的偏差）
+		existing.IsActive = *req.IsActive
+	}
+	if err := h.plugins.Save(existing); err != nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "更新插件失败")
+		return
+	}
+	response.OK(c, existing)
+}
+
 // Delete DELETE /api/v1/plugins/:id
-// 删除插件，并移除其 Caddy 规则文件。
+// 删除插件，并移除其 Caddy 规则文件。native 插件记录由宿主管理，不可删除。
 func (h *PluginHandler) Delete(c *gin.Context) {
-	if err := h.plugins.Delete(c.Param("id")); err != nil {
+	id := c.Param("id")
+	existing, err := h.plugins.FindByID(id)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			response.Error(c, http.StatusNotFound, response.CodeNotFound, "插件不存在")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询插件失败")
+		return
+	}
+	if domain.NormalizePluginType(existing.Type) == domain.PluginTypeNative {
+		response.Error(c, http.StatusBadRequest, response.CodeInvalidOperation,
+			"native 插件由宿主管理，不可删除（删除插件目录即自动标记 missing）")
+		return
+	}
+	if err := h.plugins.Delete(id); err != nil {
 		if errors.Is(err, ports.ErrNotFound) {
 			response.Error(c, http.StatusNotFound, response.CodeNotFound, "插件不存在")
 			return
@@ -257,4 +341,32 @@ func (h *PluginHandler) List(c *gin.Context) {
 		return
 	}
 	response.OK(c, plugins)
+}
+
+// Restart POST /api/v1/plugins/:id/restart
+// 重启 native 插件进程（仅对启用且已安装的插件生效）。
+func (h *PluginHandler) Restart(c *gin.Context) {
+	id := c.Param("id")
+	existing, err := h.plugins.FindByID(id)
+	if err != nil {
+		if errors.Is(err, ports.ErrNotFound) {
+			response.Error(c, http.StatusNotFound, response.CodeNotFound, "插件不存在")
+			return
+		}
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询插件失败")
+		return
+	}
+	if domain.NormalizePluginType(existing.Type) != domain.PluginTypeNative {
+		response.Error(c, http.StatusBadRequest, response.CodeInvalidOperation, "仅 native 插件可重启")
+		return
+	}
+	if h.host == nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "原生插件宿主未启用（未配置 PLUGINS_DIR）")
+		return
+	}
+	if err := h.host.Restart(c.Request.Context(), id); err != nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "插件重启失败: "+err.Error())
+		return
+	}
+	response.OK(c, nil)
 }

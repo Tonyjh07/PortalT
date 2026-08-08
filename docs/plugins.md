@@ -7,9 +7,10 @@ PortalT 的插件机制收敛为**两类**，均为门户侧"菜单项 + 页面"
 | `access` | 纯配置型（无进程） | `plugins` 表（管理界面/API） | iframe 嵌入 + API 面板（可共存） | **是**：`caddy_rules` 字段落盘 `plugins.d/` 并 reload |
 | `native` | 独立进程（PortalT spawn 监督） | `manifest.json` + DB 同步 | `/native/<id>/`（插件自带 HTTP 服务） | 否 |
 
-> 状态：`access` 已实现（合并旧 iframe/proxy）；`native` 进程化改造为重构 Phase 3
-> （规划中），当前 `native` 类型无运行时实现，本文按已落地的契约（manifest / proto）撰写，
-> 生命周期部分在 Phase 3 落地后同步更新。
+> 状态：`access` 已实现（合并旧 iframe/proxy）；`native` 进程化（重构 Phase 3）**已实现**：
+> PluginHost 扫描 `PLUGINS_DIR` spawn/监督插件进程、gRPC 控制面握手 + HTTP 数据面反代、
+> fsnotify 热加载、崩溃自动重启、管理 API 生命周期（启用/停用/重启）。
+> 示例插件见 `backend/plugins/examples/hello/`。
 
 ## access 插件：纯配置型
 
@@ -70,42 +71,64 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
 `X-PortalT-User / X-PortalT-Role / X-PortalT-Perms` 身份透传与代理白名单匹配
 （`FindEndpoint`，方法+路径精确匹配）保持不变。
 
-## native 插件（进程化，Phase 3 规划中）
+## native 插件（进程化，Phase 3 已实现）
 
-### 运行时目录与热加载（规划）
+### 运行时目录与热加载
 
 ```
-<PLUGINS_DIR>（部署机默认 <app>/plugins）
+<PLUGINS_DIR>（部署机默认 <app>/plugins；为空 = 禁用 native 能力）
 plugins/
 ├── <id>/                 # 目录名 = 插件 ID
-│   ├── plugin            # 可执行文件（任意语言编译产物）
+│   ├── plugin            # 可执行文件（Windows 为 plugin.exe；任意语言编译产物）
 │   ├── manifest.json     # 元数据 / 权限 / 钩子配置
 │   └── static/           # 插件静态前端（可选，挂 /native/<id>/）
-└── ...（fsnotify 监视整个根目录）
+└── ...（fsnotify 监视整个根目录，300ms 去抖合并）
 ```
 
-- 新增目录 → 校验 manifest + 可执行文件 → 注册（默认 `is_active=false`，管理员手动启用）
-- manifest / 二进制替换 → 停止旧进程并重启（升级）
+- 新增目录 → 校验 manifest + 可执行文件 → upsert 记录（**默认 `is_active=false`**，管理员手动启用）
+- manifest / 二进制替换 → 停止旧进程并重启（升级，先停再启）
 - 目录删除 → 停止进程，DB 记录标记 `missing`（不自动删除，保留管理员配置）
+- `manifest.id` 必须等于目录名，否则该插件被跳过不入库
 
-### 进程通信（协议已定，`backend/proto/plugin/v1/plugin.proto`）
+### 进程通信与端口分配
 
 ```
-PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PLUGIN_GRPC_PORT）
+PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PLUGIN_GRPC_PORT / PORTALT_PLUGIN_HTTP_PORT）
    ├─ gRPC 控制面（127.0.0.1:<PortalT 分配空闲端口>）
-   │    Handshake(Info)  Health()  Shutdown()  Notify(event)
-   └─ HTTP 数据面（插件自起本地端口，Handshake 上报，PortalT 校验回环后反代）
+   │    Handshake  Health  Shutdown  Notify(event)
+   └─ HTTP 数据面（127.0.0.1:<PortalT 分配空闲端口>，插件绑定后经 Handshake 确认）
 ```
 
-- 生命周期状态机：`discovered → installed → disabled → enabled → running`
-  ↘ `error`（健康探测失败/崩溃）↘ `missing`（目录被删除）
-- 钩子：启用 `Notify(enabled)`+spawn；停用 `Shutdown()`+kill；升级先停再启；
-  配置变更 `Notify(config_changed)`
-- 安全：仅执行 `PLUGINS_DIR` 内文件（防路径穿越）；反代前校验插件上报 HTTP 地址为回环
+- **端口由 PortalT 分配并经环境变量下发**（避免 manifest 固定端口冲突），插件绑定后经
+  `HandshakeRequest.HttpPort` 确认；宿主随后探测 `/healthz` 验证 HTTP 数据面回环可达。
+- 协议见 `backend/proto/plugin/v1/plugin.proto`；`Shutdown` 为优雅停机 RPC，宿主兜底 kill。
+- 生命周期状态机：`installed → disabled → enabled → running`
+  ↘ `error`（健康探测失败/崩溃，退避重启上限 5 次）↘ `missing`（目录被删除）
+- 钩子：启用 `Notify(enabled)`+spawn；停用 `Notify(disabled)`+`Shutdown()`+kill；
+  升级先停再启；重启 `Notify(restarting)`
+- 崩溃自动重启：健康探测失败或进程意外退出 → 指数退避（2s 起，封顶 30s）重启，连续失败
+  超过 5 次进入 `error` 不再自动重启（人工处理）
+- 运行态回写 `plugins.status`：`running / stopped / error / missing`
+- 安全：仅执行 `PLUGINS_DIR` 内文件（防路径穿越）；反代目标恒为宿主返回的回环地址
+  （`HTTPAddress`），不信任插件上报的主机
+
+### 管理 API（native 生命周期）
+
+- native 记录**不可手动创建/删除**（宿主按 manifest 自动 upsert；删除插件目录即标记 missing）
+- `PUT /api/v1/plugins/:id`：native 仅允许修改 `permission` 与 `is_active`（manifest 字段不可改）；
+  `is_active` 变更经宿主触发 spawn/停进程
+- `POST /api/v1/plugins/:id/restart`：重启 native 进程（`plugin:manage`）
+
+### 反代入口
+
+- API：`/api/v1/plugins/native/:pluginId/*path`（`plugin:view` + 插件启用闸门 + 声明权限 +
+  注入 `X-PortalT-User/Role/Perms`），反代到插件 HTTP 数据面
+- 静态：`/native/<id>/*`（公开，供 iframe 嵌入；仅要求插件运行中）。为防插件 API 端点
+  无鉴权暴露到公网，静态路径对 `/api/*` 一律拒绝——插件数据端点必须走上面的鉴权 API。
 
 ### manifest.json 契约（`internal/pluginpkg` 已实现解析/校验）
 
-模板见 `backend/plugins/manifest.example.json`：
+模板见 `backend/plugins/manifest.example.json`；示例见 `backend/plugins/examples/hello/manifest.json`：
 
 ```json
 {
@@ -121,6 +144,9 @@ PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PL
 
 - `id` 必须等于目录名；`route` 形如 `/id`；`permission` 声明最小访问权限（须在权限字典内，
   空 = 无需额外权限）；`health_interval_seconds` 为宿主健康探测间隔（秒，缺省默认值）
+- `backend/plugins/examples/hello/cmd/hello/main.go` 为最小 native 插件模板（Go）：gRPC 控制面
+  （Handshake/Health/Shutdown/Notify）+ HTTP 数据面（/healthz + /api/hello + 首页）；
+  集成测试真实 spawn 该插件验证全生命周期，`go test -tags integration ./internal/pluginhost/...`
 
 ### 官方插件 submodule 组织
 

@@ -5,6 +5,7 @@
 package ports
 
 import (
+	"context"
 	"errors"
 
 	"portalt/internal/domain"
@@ -109,4 +110,20 @@ type CaddyApplier interface {
 	Remove(id string) error
 	// Reload 触发 Caddy 热加载；命令未配置或不可用时静默成功（仅落盘）。
 	Reload() error
+}
+
+// NativeHost native 插件进程宿主接口（由 pluginhost.Manager 实现）。
+// 管理 API 经此接口触发生命周期操作；状态查询供管理界面展示。
+type NativeHost interface {
+	// Enable 启用插件：更新 is_active=true 并 spawn 进程（native 专属）。
+	Enable(ctx context.Context, id string) error
+	// Disable 停用插件：更新 is_active=false 并停止进程（native 专属）。
+	Disable(ctx context.Context, id string) error
+	// Restart 重启插件：停止后重新 spawn（仅启用且已安装的插件生效）。
+	Restart(ctx context.Context, id string) error
+	// Status 返回插件运行态（running/stopped/error/missing）；未找到返回空串。
+	Status(id string) string
+	// HTTPAddress 返回插件 HTTP 数据面回环地址（"127.0.0.1:<port>"）；
+	// 未运行返回空串。代理层据此反代（防 SSRF）。
+	HTTPAddress(id string) string
 }

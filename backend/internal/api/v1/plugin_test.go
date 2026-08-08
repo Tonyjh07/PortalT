@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -22,7 +23,7 @@ func setupPlugin(t *testing.T) (*gin.Engine, *memory.PluginRepository) {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	repo := memory.NewPluginRepository()
-	handler := NewPluginHandler(repo, nil, nil)
+	handler := NewPluginHandler(repo, nil, nil, nil)
 
 	r := gin.New()
 	r.POST("/plugins", handler.Create)
@@ -40,6 +41,42 @@ type stubCaddy struct {
 	applyErr error
 	relErr   error
 }
+
+// stubNativeHost 可编程的 native 宿主桩，记录生命周期调用并模拟失败。
+type stubNativeHost struct {
+	enabled   []string
+	disabled  []string
+	restarted []string
+	err       error
+}
+
+func (s *stubNativeHost) Enable(_ context.Context, id string) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.enabled = append(s.enabled, id)
+	return nil
+}
+
+func (s *stubNativeHost) Disable(_ context.Context, id string) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.disabled = append(s.disabled, id)
+	return nil
+}
+
+func (s *stubNativeHost) Restart(_ context.Context, id string) error {
+	if s.err != nil {
+		return s.err
+	}
+	s.restarted = append(s.restarted, id)
+	return nil
+}
+
+func (s *stubNativeHost) Status(id string) string { return "" }
+
+func (s *stubNativeHost) HTTPAddress(id string) string { return "" }
 
 func (s *stubCaddy) Apply(id, rules string) error {
 	if s.applyErr != nil {
@@ -108,7 +145,7 @@ func TestPluginHandler_PermissionDictValidation(t *testing.T) {
 	repo := memory.NewPluginRepository()
 	perms := memory.NewPermissionRepository()
 	require.NoError(t, perms.EnsureDefault(domain.AllPermissions()))
-	handler := NewPluginHandler(repo, perms, nil)
+	handler := NewPluginHandler(repo, perms, nil, nil)
 
 	r := gin.New()
 	r.POST("/plugins", handler.Create)
@@ -193,7 +230,7 @@ func setupPluginWithCaddy(t *testing.T, c *stubCaddy) (*gin.Engine, *memory.Plug
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	repo := memory.NewPluginRepository()
-	handler := NewPluginHandler(repo, nil, c)
+	handler := NewPluginHandler(repo, nil, c, nil)
 	r := gin.New()
 	r.POST("/plugins", handler.Create)
 	r.PUT("/plugins/:id", handler.Update)
@@ -301,20 +338,142 @@ func TestPlugin_CaddySync_ClearRulesRemoves(t *testing.T) {
 func TestPlugin_CaddySync_SkippedForNative(t *testing.T) {
 	c := &stubCaddy{}
 	r, _, _ := setupPluginWithCaddy(t, c)
+	// native 插件记录由宿主按 manifest 自动注册，管理 API 不可手动创建
 	w := pluginDo(t, r, http.MethodPost, "/plugins", map[string]any{
 		"id": "np", "name": "原生", "route": "/np", "type": "native",
 	})
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Len(t, c.applied, 0)
 	assert.Equal(t, 0, c.reloads)
+}
+
+// setupNativeRouter 组装带 native 宿主桩的插件管理路由（含重启端点）。
+func setupNativeRouter(t *testing.T, host ports.NativeHost) (*gin.Engine, *memory.PluginRepository, *stubNativeHost) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	repo := memory.NewPluginRepository()
+	handler := NewPluginHandler(repo, nil, nil, host)
+	r := gin.New()
+	r.PUT("/plugins/:id", handler.Update)
+	r.DELETE("/plugins/:id", handler.Delete)
+	r.POST("/plugins/:id/restart", handler.Restart)
+	stub, _ := host.(*stubNativeHost)
+	return r, repo, stub
+}
+
+func TestPlugin_Native_UpdateEnableDisable(t *testing.T) {
+	host := &stubNativeHost{}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative,
+		IsActive: false, Status: "stopped", Permission: "vm:view",
+	}))
+
+	// 启用 → 宿主 Enable 被调用，is_active 更新
+	w := pluginDo(t, r, http.MethodPut, "/plugins/hello", map[string]any{
+		"name": "被忽略", "route": "/被忽略", "type": "access",
+		"is_active": true,
+	})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []string{"hello"}, host.enabled)
+	assert.Empty(t, host.disabled)
+
+	got, err := repo.FindByID("hello")
+	require.NoError(t, err)
+	assert.True(t, got.IsActive)
+	assert.Equal(t, "vm:view", got.Permission, "未提供 permission 时保留现有声明权限")
+	assert.Equal(t, "Hello", got.Name, "native 其余字段以 manifest 为准，不受请求体影响")
+
+	// 停用 → 宿主 Disable 被调用
+	w = pluginDo(t, r, http.MethodPut, "/plugins/hello", map[string]any{"is_active": false})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []string{"hello"}, host.disabled)
+}
+
+func TestPlugin_Native_UpdatePermission(t *testing.T) {
+	host := &stubNativeHost{}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative, IsActive: false,
+	}))
+	// 仅改 permission（带空串显式清空也合法），不触发生命周期
+	w := pluginDo(t, r, http.MethodPut, "/plugins/hello", map[string]any{"permission": "vm:view"})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, host.enabled)
+	got, err := repo.FindByID("hello")
+	require.NoError(t, err)
+	assert.Equal(t, "vm:view", got.Permission)
+}
+
+func TestPlugin_Native_UpdateNoChangeSkipsHost(t *testing.T) {
+	host := &stubNativeHost{}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative, IsActive: true,
+	}))
+	w := pluginDo(t, r, http.MethodPut, "/plugins/hello", map[string]any{"is_active": true})
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, host.enabled)
+	assert.Empty(t, host.disabled, "启用状态未变化时不触发生命周期")
+}
+
+func TestPlugin_Native_UpdateHostError(t *testing.T) {
+	host := &stubNativeHost{err: errors.New("spawn 失败")}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative, IsActive: false,
+	}))
+	w := pluginDo(t, r, http.MethodPut, "/plugins/hello", map[string]any{"is_active": true})
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestPlugin_Native_DeleteRejected(t *testing.T) {
+	host := &stubNativeHost{}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative,
+	}))
+	w := pluginDo(t, r, http.MethodDelete, "/plugins/hello", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	_, err := repo.FindByID("hello")
+	assert.NoError(t, err, "native 记录不可删除")
+}
+
+func TestPlugin_Restart_Native(t *testing.T) {
+	host := &stubNativeHost{}
+	r, repo, _ := setupNativeRouter(t, host)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative, IsActive: true,
+	}))
+	w := pluginDo(t, r, http.MethodPost, "/plugins/hello/restart", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, []string{"hello"}, host.restarted)
+}
+
+func TestPlugin_Restart_NonNativeRejected(t *testing.T) {
+	r, repo, _ := setupNativeRouter(t, &stubNativeHost{})
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "esxi", Name: "ESXi", Route: "/esxi-admin", Type: domain.PluginTypeAccess,
+	}))
+	w := pluginDo(t, r, http.MethodPost, "/plugins/esxi/restart", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestPlugin_Restart_NoHost(t *testing.T) {
+	r, repo, _ := setupNativeRouter(t, nil)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "hello", Name: "Hello", Route: "/hello", Type: domain.PluginTypeNative,
+	}))
+	w := pluginDo(t, r, http.MethodPost, "/plugins/hello/restart", nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestPlugin_AccessValidation(t *testing.T) {
 	r, _ := setupPlugin(t)
 	cases := []struct {
-		name    string
-		body    map[string]any
-		want    int
+		name string
+		body map[string]any
+		want int
 	}{
 		{"无 iframe 无 api → 400", map[string]any{"id": "a", "name": "x", "route": "/a", "type": "access"}, http.StatusBadRequest},
 		{"iframe 相对路径 → 200", map[string]any{"id": "b", "name": "x", "route": "/b", "type": "access", "iframe_url": "/esxi/ui/"}, http.StatusOK},

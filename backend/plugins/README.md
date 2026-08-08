@@ -10,6 +10,7 @@ backend/plugins/
 │   ├── cmd/...      # 插件可执行文件入口（监听 gRPC 控制面 + HTTP 数据面）
 │   ├── manifest.json
 │   └── static/      # 插件静态前端（可选，挂载 /native/<id>/）
+├── examples/        # 本地示例（非 submodule，直接投放 PLUGINS_DIR 验证链路）
 └── README.md
 ```
 
@@ -29,3 +30,17 @@ backend/plugins/
   投放 `PLUGINS_DIR`。
 - **用户插件**：本地自行维护源码与产物，直接投放预编译产物到 `PLUGINS_DIR`
   即可（任意语言），不经过本目录。
+
+## 本地示例（examples/）
+
+`examples/hello/` 是一个最小的 native 插件（Go 实现），用于本地 dev 冒烟与
+集成测试。构建并投放：
+
+```bash
+cd backend
+go build -o <PLUGINS_DIR>/hello/plugin ./plugins/examples/hello/cmd/hello
+# manifest.json 随目录投放（见 examples/hello/manifest.json）
+```
+
+其运行形态即官方插件模板：gRPC 控制面（Handshake/Health/Shutdown/Notify）+
+HTTP 数据面（/healthz + /native 前端 + /api 示例）。

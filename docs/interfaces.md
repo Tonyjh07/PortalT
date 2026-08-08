@@ -101,9 +101,10 @@ GET /api/v1/menu
 
 ```
 GET    /api/v1/plugins     → 全部插件（含停用）
-POST   /api/v1/plugins     → 注册插件（id 可选，缺省自动生成；name/route 必填）
-PUT    /api/v1/plugins/:id → 更新插件（全字段覆盖）
-DELETE /api/v1/plugins/:id → 删除插件（同时移除其 Caddy 规则文件并 reload）
+POST   /api/v1/plugins     → 注册插件（id 可选，缺省自动生成；name/route 必填；native 不可手动创建）
+PUT    /api/v1/plugins/:id → 更新插件（access 全字段覆盖；native 仅允许改 permission/is_active，启停经宿主）
+DELETE /api/v1/plugins/:id → 删除插件（同时移除其 Caddy 规则文件并 reload；native 不可删除）
+POST   /api/v1/plugins/:id/restart → 重启 native 插件进程（仅 native）
 ```
 
 - 请求体：`{"id","name","icon","route","type","iframe_url","api_url","endpoints","caddy_rules","permission","sort_order","is_active"}`
@@ -115,7 +116,9 @@ DELETE /api/v1/plugins/:id → 删除插件（同时移除其 Caddy 规则文件
 - `caddy_rules`：原始 Caddy `handle` 片段，保存时落盘 `plugins.d/<id>.caddy` 并触发 reload
   （`PLUGIN_CADDY_DIR` 为空则跳过；reload 失败返回告警文案但插件已保存）
 - 插件声明的 `permission` 必须存在于权限字典；access 删除/停用会同步移除对应 Caddy 规则文件
-- `native` 类型暂不能通过接口创建（进程化实现后由插件宿主按 manifest 自动 upsert，仅允许改权限/启用状态）
+- `native` 类型不能通过接口创建/删除（记录由插件宿主按 manifest 自动 upsert）；
+  `PUT` 仅接受 `permission` 与 `is_active`（其余字段以 manifest 为准），`is_active` 变更经宿主
+  触发 spawn/停进程（未配置 `PLUGINS_DIR` 时返回 500）；`POST /:id/restart` 重启 native 进程
 
 ### access 插件标准 API 代理（需认证 + `plugin:view`）
 
@@ -139,13 +142,27 @@ GET /api/v1/platform
   `{"provider": "esxi|workstation|mock", "web_url": "https://host/ui/", "connected": bool}`
 - `connected` 当前仅 `provider == "esxi"` 为 true
 
-### 原生插件（需认证 + `plugin:view`，重构中）
+### 原生插件（需认证 + `plugin:view`，Phase 3 已实现）
 
-- **现状**：进程化改造（独立进程 + gRPC 控制面 + HTTP 数据面 + 热加载）为重构 Phase 3（规划中），
-  当前 `native` 类型无运行时实现（注册表为空，无示例插件）
-- 目标形态（Phase 3 落地后更新本文档）：插件宿主扫描 `PLUGINS_DIR` 按 `manifest.json` upsert 记录并
-  spawn 进程；API 反代 `/api/v1/plugins/native/:pluginId/...`；静态前端 `/native/<id>/`；
-  运行态 `status`（running/stopped/error/missing）与 `manifest_json` 由宿主回写
+- 插件宿主（`pluginhost.Manager`）扫描 `PLUGINS_DIR` 按 `manifest.json` upsert 记录并 spawn 进程：
+  - 新增插件默认 `is_active=false`（管理员手动启用）；manifest/二进制替换 → 重启（升级）；
+    目录删除 → 标记 `missing`（保留记录）
+  - 端口由宿主分配经环境变量下发（`PORTALT_PLUGIN_GRPC_PORT` / `PORTALT_PLUGIN_HTTP_PORT`），
+    gRPC 握手确认后反代；健康探测失败/崩溃自动退避重启（上限 5 次）
+  - 运行态回写 `status`（running/stopped/error/missing）与 `manifest_json`
+- API 反代（反代到插件 HTTP 数据面，注入 `X-PortalT-User/Role/Perms`）：
+
+```
+GET/POST/PUT/DELETE /api/v1/plugins/native/:pluginId/*path
+```
+
+- 静态前端（公开，供 iframe 嵌入；仅要求插件运行中）。静态路径对 `/api/*` 一律拒绝
+  （404），插件数据端点必须走鉴权 API：
+
+```
+GET /native/:pluginId/*path
+```
+
 - 权限三层模型保留：组级 `plugin:view` → 每插件 `is_active` 闸门 → 声明的 `permission` 硬校验
 - 完整开发规范见 [plugins.md](./plugins.md)
 

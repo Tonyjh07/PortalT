@@ -9,7 +9,6 @@ import (
 	"portalt/internal/api/response"
 	"portalt/internal/api/v1"
 	"portalt/internal/domain"
-	"portalt/internal/plugins"
 	"portalt/internal/ports"
 )
 
@@ -29,9 +28,8 @@ type HandlerSet struct {
 	Platform    *v1.PlatformHandler
 
 	// 原生插件（可选，nil 时相关路由不挂载）
-	Native     *plugins.Registry
-	NativeDeps plugins.Deps
-	PluginRepo ports.PluginRepository
+	NativeProxy *v1.NativeProxyHandler
+	PluginRepo  ports.PluginRepository
 
 	// 权限字典与虚拟机资源授权（可选，nil 时相关能力禁用/跳过校验）
 	Permissions ports.PermissionRepository
@@ -91,6 +89,7 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		plugins.POST("", hs.Plugin.Create)
 		plugins.PUT("/:id", hs.Plugin.Update)
 		plugins.DELETE("/:id", hs.Plugin.Delete)
+		plugins.POST("/:id/restart", hs.Plugin.Restart)
 
 		// 脚本插件标准 API 代理（plugin:view + 插件自身权限 + 端点白名单）
 		if hs.PluginProxy != nil {
@@ -98,11 +97,12 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 			proxy.Any("/:pluginId/*path", hs.PluginProxy.Proxy)
 		}
 
-		// 原生插件 API（plugin:view + 插件启用闸门；路由由插件自身挂载）
-		if hs.Native != nil && hs.PluginRepo != nil {
+		// 原生插件 API（plugin:view + 插件启用闸门 + 声明权限 + 回环反代）
+		if hs.NativeProxy != nil && hs.PluginRepo != nil {
 			nativeG := protected.Group("/plugins/native", middleware.RequirePermission(domain.PERM_PLUGIN_VIEW))
-			hs.Native.MountAPI(nativeG, hs.NativeDeps, hs.PluginRepo)
-			hs.Native.MountStatic(router)
+			nativeG.Any("/:pluginId/*path", hs.NativeProxy.APIProxy)
+			// 原生插件静态前端（公开，供 iframe 嵌入；数据一律走鉴权 API）
+			router.Any("/native/:pluginId/*path", hs.NativeProxy.StaticProxy)
 		}
 
 		// 用户管理（user:manage，管理员）

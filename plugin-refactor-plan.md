@@ -1,7 +1,7 @@
 # PortalT 插件系统重构计划
 
-> 状态：**Phase 1、2 已完成（access 收敛 + Caddy 交互）**；Phase 3（native 进程化 + 热加载）未开始，
-> Phase 4（部署 + 文档）随各阶段同步推进。本文件是重构的设计蓝图，实施结果以
+> 状态：**Phase 1、2、3 已完成（access 收敛 + Caddy 交互 + native 进程化）**；Phase 4（部署 + 前端增强 + 文档）
+> 进行中。本文档是重构的设计蓝图，实施结果以
 > `docs/plugins.md`、`docs/interfaces.md`、`About.md` 进度表为准。
 >
 > 决策前提（已确认）：
@@ -193,8 +193,12 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
 
 ### Phase 3：native 进程化 + 热加载 + 生命周期（核心）
 - 目标：native 变为独立进程，支持热加载与生命周期管理。
-- 前置：先做 **gin 动态路由 spike**（已知风险：同前缀 `handle` 重复注册会 panic；
-  结论决定用"前缀占位路由 + manager 内部分发"还是"启动前全量扫描重建路由"）。
+- 前置：**gin 动态路由 spike 已完成**（`pluginhost/route_spike_test.go`，结论记录于文件头）：
+  - 方案 A（前缀占位路由 + manager 内部分发）可行：一条固定通配路由
+    `/api/v1/plugins/native/:pluginId/*path` 承载任意插件，`:pluginId` 与 `*path` 可共存，
+    多插件不冲突，运行时无需重注册 gin 路由，天然适配热加载。**采用方案 A。**
+  - 方案 B（启动前全量扫描重建路由）否决：gin 对同前缀 `handle` 重复注册 panic
+    （`http: multiple registrations`），动态增删路由需重建 engine，复杂且易错。
 - 产出：
   1. `backend/internal/pluginhost/`：
      - `manager.go`：进程监督（spawn / kill / restart，状态机，退避 / 崩溃限制）。
@@ -208,6 +212,13 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
      `SyncNativePlugins` 改为 manager 动态驱动；移除 `NativeDeps`。
   5. 测试：`pluginhost` 单元测试（fake 插件进程）+ 集成测试（真实 spawn）。
 - 验收：新增 / 替换 / 删除插件二进制时热生效；进程崩溃自动重启；权限三层校验仍生效。
+- 状态：**已完成**（`pluginhost/manager.go` 进程监督+健康探测+退避重启、`watcher.go` fsnotify
+  热加载、`Load/upsert` 扫描与 DB 同步、反代 `api/v1/native_proxy.go`（方案 A 前缀占位路由）、
+  管理 API 生命周期（native 仅改权限/启用、重启端点）、示例插件 `plugins/examples/hello`、
+  单元测试 + `-tags integration` 真实 spawn 全生命周期；`go test ./... -count=1` 全绿 +
+  `go build/vet` 干净。注：原计划拆分的 `loader.go / grpc_client.go / http_proxy.go` 已并入
+  `manager.go` 与 `api/v1/native_proxy.go`（gin 上下文依赖使反代放 api 层），旧 `internal/plugins`
+  编译期注册包已整体删除）
 
 ### Phase 4：装配 + 部署 + 文档
 - 目标：部署闭环 + 前端管理增强 + 全量文档。
