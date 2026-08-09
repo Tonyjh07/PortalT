@@ -125,7 +125,20 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
 `esxi-admin` 插件在门户内 iframe 嵌入 ESXi Host Client（`https://<esxi-host>/ui/`）。
 **直连内网 IP 不可行**（外部设备不可达 + `X-Frame-Options: DENY`），必须经 Caddy 反代：
 
-### 反代规则（已内置 `caddy/Caddyfile` 的 `esxi_proxy_routes`）
+### 反代规则（由 esxi-admin 插件提供，已带门户鉴权）
+
+ESXi 反代规则**由 `esxi-admin` 插件的 `caddy_rules` 默认值**（`DefaultESXIAdminCaddyRules`，
+见 `backend/internal/pluginhost/caddy.go`）提供，后端启动时落盘 `<PLUGIN_CADDY_DIR>/<id>.caddy`
+并 reload；**内置 `caddy/Caddyfile` 不再包含任何 ESXi handle**。因此**停用/删除该插件即移除规则，
+`/esxi/*` 等路径不再反代，访问自然收回**。
+
+**鉴权**：每个 handle 先经 Caddy `forward_auth` 回调门户鉴权闸口
+`GET /api/v1/auth/gate?perm=esxi-admin:use`（校验请求 cookie 中的 access/refresh 令牌，
+再用角色矩阵校验 `esxi-admin:use` 权限）——未登录返回 401、无权限返回 403（iframe 内显示中文
+提示页），放行后才反代到 ESXi。插件页在门户内加载时每 5 分钟静默续期 access cookie
+（`pages/plugins/[...slug].vue`），长会话不中断。
+
+路径要点（与插件规则一致）：
 
 - `/esxi/*` → 剥前缀后指向 ESXi（页面与相对路径静态资源；iframe 地址
   `ESXI_WEB_URL=/esxi/ui/` 同源反代，本地 http 与隧道 https 均可用）；
@@ -138,10 +151,10 @@ caddy run --config C:\path\to\Caddyfile --adapter caddyfile
   - `Content-Security-Policy: upgrade-insecure-requests` —— 否则 http 页面下
     子资源被强制升级 https 导致登录失败（`ERR_SSL_PROTOCOL_ERROR`）；
 - `/ticket*` 是 VM 控制台 **WebSocket 端点**（`wss://<host>/ticket/<ticket>`），
-  Caddy `reverse_proxy` 原生透传 WS；
+  Caddy `forward_auth`（恒发 GET 子请求）+ `reverse_proxy` 原生透传 WS；
 - 目标 ESXi 用 `ESXI_UPSTREAM` 环境变量设置（**只填主机名/IP，不带 scheme 与端口**，上游固定走 443；
   **仓库不预设地址**；未设置时 Caddy 仍正常启动，仅访问 `/esxi/*`、`/ui/*` 等路径请求期报错，
-  避免静默反代到错误主机）。
+  避免静默反代到错误主机；该变量由插件规则经 `{env.ESXI_UPSTREAM}` 在运行时解析）。
 
 ### 本机/局域网 https 入口（必须）
 
@@ -169,10 +182,15 @@ certutil -addstore -f Root C:\portalt\local\portalt-local.crt
 ### 验证
 
 ```powershell
-# 反代连通（应 200；welcome.txt 404 是 ESXi 自身行为，可忽略）
-curl -k https://127.0.0.1:8443/esxi/ui/
-# 登录后控制台：浏览器 DevTools → Network → WS，观察 wss://<入口>/ticket/<ticket> 连接成功
+# 1) 未登录直连 → 401（鉴权闸口拒绝，若得 200 说明 ESXi 已暴露）
+curl -k -o /dev/null -w "%{http_code}\n" https://127.0.0.1:8443/esxi/ui/
+# 2) 带上门户 cookie（登录后在浏览器复制 access_token）→ 应放行（200/301）
+curl -k -o /dev/null -w "%{http_code}\n" -H "Cookie: access_token=<门户access令牌>" https://127.0.0.1:8443/esxi/ui/
+# 3) 登录后控制台：浏览器 DevTools → Network → WS，观察 wss://<入口>/ticket/<ticket> 连接成功
 ```
+
+> 注意：`https://:8443` 入口（本机/局域网，未启用域名 HTTPS 时）也要能访问插件规则，
+> Caddyfile 中该块的 `import plugins.d/*.caddy` 须与主站一致（已内置）。
 
 ## 五、验证
 
@@ -238,14 +256,22 @@ node ws-host-test.cjs   # 预期：WS OPEN → 收到 VNC 渲染指令 → 连�
 `CADDY_PORT` 变量/`/healthz` handle/注释态的 8443、443 块）。生产配置只需三步：
 
 1. 复制 `caddy/Caddyfile` 到部署机（如 `C:\portalt\caddy\Caddyfile`），**无需改内容**；
+   ESXi 反代规则由后端插件落盘（`plugins.d/<id>.caddy`），**后端须先启动并完成规则写盘 + reload**，
+   `/esxi/*` 才会被反代；
 2. 环境变量注入（可写入服务/计划任务环境）：
    ```powershell
    $env:CADDY_PORT = "8808"                   # 入口端口（默认 8808，改后同步隧道 ingress）
    $env:ESXI_UPSTREAM = "esxi.lan"           # 目标 ESXi，只填主机名/IP（必填，仓库无默认；多 ESXi 时必配）
    ```
+   `ESXI_UPSTREAM` 由**插件规则**经 `{env.ESXI_UPSTREAM}` 在运行时解析；
 3. 启动：`caddy run --config C:\portalt\caddy\Caddyfile`；
    需要 ESXi 管理界面嵌入时另起 https 入口：按 §四·六 生成自签 RSA 证书并解开
    `https://:8443` 注释块（证书路径改为部署机实际路径）。
+
+> **升级顺序**（本特性涉及后端与 Caddy 两处）：先部署新后端（seed 将插件规则升级为带鉴权闸口
+> 的新默认值并写盘 reload），再同步新 Caddyfile（update.sh 自动校验/回滚）。反序时旧 Caddyfile
+> 的 ESXi handle 无鉴权闸口，`/esxi/*` 会**短暂无鉴权暴露**（而非仅 5xx），请尽量缩短该窗口、
+> 避免在窗口内公布入口地址。
 
 > **"拉仓库改了就能跑"需要的前置**：Caddyfile 本身 `caddy validate` 即可用，但完整门户
 > 还需——后端二进制（`go build ./cmd/server`，配 `VIRT_PROVIDER`/ESXi 凭据/DB/JWT

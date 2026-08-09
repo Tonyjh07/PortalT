@@ -41,7 +41,8 @@ export function useApi() {
         if (code === 4002 && !isAuthEndpoint && !retried) {
           ;(options as unknown as { _retried?: boolean })._retried = true
           const { refresh, logout } = useAuth()
-          if (await refresh()) {
+          const r = await refresh()
+          if (r === 'ok') {
             const { token } = useAuth()
             options.headers = { ...options.headers, Authorization: `Bearer ${token.value}` }
             return $fetch(request, options)

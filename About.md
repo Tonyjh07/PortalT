@@ -722,6 +722,7 @@ DOMAIN=portal.yourlab.com
 | 插件重构 Phase 1-2（access 收敛 + Caddy 交互） | ✅ 完成 | 2026-08-08 | ①协议与骨架：`proto/plugin/v1` gRPC 控制面（Handshake/Health/Shutdown/Notify）+ `pluginpkg` manifest 契约 + `backend/plugins/` submodule 约定与模板②access 收敛：type 收敛 `access|native`（旧 iframe/proxy 合并，`iframe_url`+`api_url`+`endpoints`+`caddy_rules` 任意共存）、迁移 006 破坏性重建 plugins 表、domain/仓储/管理 API/代理全链路适配、新增 `/api/v1/platform`、`pluginhost/caddy.go`（落盘 plugins.d/<id>.caddy + reload，无 Caddy 安全降级）、esxi-admin 迁移为 access 种子（含 ESXi 反代规则默认值，内置 Caddyfile 未瘦身）、移除 cron 示例③前端：插件页 access 一页双区块（iframe+API 面板）+ esxi-admin 三态占位、插件管理页类型收敛 + Caddy 规则编辑器 + native 只读状态④文档与进度同步；`go test ./... -count=1` 全绿 + `go build/vet` 干净 + `npm run build` 通过 + 运行时冒烟（登录→platform→esxi-admin 菜单含默认规则） |
 | 插件重构 Phase 3（native 进程化 + 热加载 + 生命周期） | ✅ 完成 | 2026-08-08 | ①gin 动态路由 spike（方案 A 前缀占位路由 + manager 内部分发，`pluginhost/route_spike_test.go`）②`pluginhost/manager.go` 进程监督：端口分配经 env 下发（PORTALT_PLUGIN_GRPC/HTTP_PORT）、gRPC 握手（connectivity 轮询避开 NewClient 懒连接）、健康探测、崩溃退避重启（上限 5 次）、运行态回写 `status` ③`watcher.go` fsnotify 热加载（新增默认禁用/替换重启/删除标记 missing，300ms 去抖）④`Load/upsert` 扫描 `PLUGINS_DIR`（manifest.id 必须=目录名，新插件默认 is_active=false，保留管理员权限/启用配置）⑤反代 `api/v1/native_proxy.go`（`/api/v1/plugins/native/:pluginId/*path` + `/native/:pluginId/*path`，三层权限 + 身份头注入，防 SSRF）⑥管理 API 生命周期：native 不可手动创建/删除、`PUT` 仅改 permission/is_active（启停经宿主）、`POST /:id/restart` ⑦示例插件 `backend/plugins/examples/hello/`（gRPC 控制面 + HTTP 数据面）⑧删除旧 `internal/plugins` 编译期注册包；`go test ./... -count=1` 全绿 + `go build/vet` 干净 + `go test -tags integration ./internal/pluginhost/` 真实 spawn 全生命周期通过 |
 | 插件重构 Phase 4（装配 + 部署 + 前端增强 + 文档） | ✅ 完成 | 2026-08-08 | ①`deploy/install.sh` 创建 `PLUGINS_DIR`、`systemd` 补 `PLUGINS_DIR/PLUGIN_CADDY_DIR/CADDY_RELOAD_CMD`、`Caddyfile` 主站添加 `import plugins.d/*.caddy`（access 插件规则落盘入口）；官方 submodule 插件构建循环（当前无官方插件，循环为空）②`deploy/update.sh` 插件目录备份/回滚（更新前备份，回滚时恢复）+ 官方插件重建（循环同上）③前端管理增强：native 行轮询运行态（15s interval，仅含 native 时触发）、启用/停用/重启按钮；access 行显示 `caddy_applied` 落盘状态（后端 List 响应计算字段）④接口文档同步：Plugin JSON 增加 `caddy_applied` 字段说明；`go test ./... -count=1` 全绿 + `go build/vet` 干净 + `npm run build` 通过 |
+| ESXi 反代接入门户鉴权（Caddy forward_auth） | ✅ 完成 | 2026-08-09 | ①后端新增鉴权闸口 `GET /api/v1/auth/gate?perm=<权限>`：令牌按 Authorization/`?token=`/`access_token` cookie 提取，失效回退 `refresh_token`（双令牌续期），RoleLoader 角色矩阵校验（`esxi-admin:use`），未登录 401 / 无权限 403（中文 HTML 提示页）；`NewAuthHandler` 注入 RoleLoader、公开组注册 ②Caddy `forward_auth` 接入：`DefaultESXIAdminCaddyRules` 每个 handle 加闸口回调（旧无鉴权默认 `DefaultESXIAdminCaddyRulesV1` + seed 自动升级迁移，仅精确匹配旧默认才覆盖、保留管理员自定义）；内置 Caddyfile 精简掉全部 ESXi handle，ESXi 规则仅由插件提供（停用插件即移除规则、访问收回）③前端插件页每 5 分钟静默续期 access cookie（`pages/plugins/[...slug].vue`）④`gate_test.go` 12 用例（令牌来源/权限/矩阵/续期回退/缺参）+ 路由级 3 用例（含 cookie 路径）+ caddy_test 断言 + Caddy 组合配置 docker validate 通过 + `go test ./... -count=1` 全绿 + `npm run build` 通过 |
 | Phase 10: CI/CD与部署 | 🔄 部分完成（部署脚本） | 2026-08-07 | `deploy/install.sh` + `deploy/update.sh` 一键安装/更新（仅依赖 bash + 包管理器，以生产为标准：systemd + Caddy 8808 + Docker 容器 guacd/postgres + /opt/portalt 布局）；`update.sh` 增强：无新提交不更新（`--force` 强制）、`--rollback [n]` 回滚到前 n 个版本（最多 2，来源为更新时自动备份的二进制/前端产物/插件目录）、分段跳过参数（`--skip-pull/backend/frontend/plugins/restart/health`）、Caddyfile 差异自动同步（校验失败回滚）、编译走 goproxy.cn 镜像、脚本自更新；生产服务器实测通过（安装/更新/健康检查/失败回滚）；CI/CD workflow（GitHub Actions）尚未实施 |
 
 ### 环境与配置备注
@@ -749,8 +750,8 @@ DOMAIN=portal.yourlab.com
 
 ---
 
-**文档版本**：v1.2  
-**最后更新**：2026-08-08  
+**文档版本**：v1.3  
+**最后更新**：2026-08-09  
 **维护者**：Tonyjh07
 
 ---

@@ -34,8 +34,13 @@ export function useAuth() {
     return res.user
   }
 
-  async function refresh(): Promise<boolean> {
-    if (!refreshToken.value) return false
+  // refresh 用刷新令牌换取新访问令牌并写回 cookie。
+  // 返回三态：
+  //   'ok'      —— 续期成功；
+  //   'expired' —— 刷新令牌确认失效（401，refresh 已不可用，调用方应登出）；
+  //   'error'   —— 其他失败（网络/5xx/缺少刷新令牌），属瞬时故障，调用方可跳过本轮。
+  async function refresh(): Promise<'ok' | 'expired' | 'error'> {
+    if (!refreshToken.value) return 'error'
     try {
       const { api } = useApi()
       const res = await api<RefreshResult>('/auth/refresh', {
@@ -44,9 +49,10 @@ export function useAuth() {
       })
       writeCookie(ACCESS_COOKIE, res.access_token, ACCESS_MAX_AGE)
       accessToken.value = res.access_token
-      return true
-    } catch {
-      return false
+      return 'ok'
+    } catch (err) {
+      const status = (err as { response?: { status?: number } })?.response?.status
+      return status === 401 ? 'expired' : 'error'
     }
   }
 

@@ -54,6 +54,9 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 	authG := v1g.Group("/auth")
 	authG.POST("/login", hs.Auth.Login)
 	authG.POST("/refresh", hs.Auth.Refresh)
+	// 鉴权闸口（Caddy forward_auth 回调，自行完成令牌与权限校验，不套 protected）：
+	// 校验请求携带的 access/refresh 令牌并检查 ?perm= 权限，决定是否放行反代目标。
+	authG.GET("/gate", hs.Auth.Gate)
 
 	// 受保护路由
 	protected := v1g.Group("")

@@ -6,6 +6,33 @@ definePageMeta({ middleware: 'auth' })
 const route = useRoute()
 const { items, load, findByRoute } = useMenu()
 const { api } = useApi()
+const { refresh, logout } = useAuth()
+
+// 门户内相对路径 iframe（如 esxi-admin /esxi/ui/）为长会话：access_token 仅 15 分钟，
+// 页面挂载期间每 5 分钟静默续期一次（useAuth.refresh 写回 cookie），保证 iframe 内
+// 大量子请求（经 Caddy forward_auth 闸口校验）与门户 API 的令牌保持新鲜。
+// 仅在续期确认失败（refresh token 失效，refresh() 返回 'expired'）时登出并停止定时器；
+// 网络抖动/后端短暂不可用（'error'）跳过本轮，避免把用户踢出登录态。
+const KEEPALIVE_INTERVAL = 5 * 60 * 1000
+let keepaliveTimer: ReturnType<typeof setInterval> | null = null
+
+function startKeepalive() {
+  const tick = async () => {
+    if ((await refresh()) === 'expired') {
+      stopKeepalive()
+      logout()
+    }
+  }
+  void tick()
+  keepaliveTimer = setInterval(tick, KEEPALIVE_INTERVAL)
+}
+
+function stopKeepalive() {
+  if (keepaliveTimer) {
+    clearInterval(keepaliveTimer)
+    keepaliveTimer = null
+  }
+}
 
 const plugin = ref<MenuItem | null>(null)
 const notFound = ref(false)
@@ -31,6 +58,7 @@ function isPortalIframe(p: MenuItem): boolean {
 }
 
 async function sync() {
+  stopKeepalive()
   const path = '/' + (route.params.slug as string[]).join('/')
   if (!items.value.length) {
     try {
@@ -46,6 +74,7 @@ async function sync() {
     notFound.value = false
     iframeFailed.value = false
     if (isPortalIframe(found)) {
+      startKeepalive()
       platform.value = null
       platformErr.value = false
       try {
@@ -89,6 +118,7 @@ async function callEndpoint() {
 }
 
 onMounted(sync)
+onUnmounted(stopKeepalive)
 watch(() => route.params.slug, sync)
 watch(selectedEndpoint, () => {
   methodResult.value = null

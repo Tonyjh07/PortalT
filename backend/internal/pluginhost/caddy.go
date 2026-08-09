@@ -24,11 +24,10 @@ var ErrReloadFailed = errors.New("Caddy reload 失败")
 // ReloadTimeout reload 命令超时时间。
 const ReloadTimeout = 15 * time.Second
 
-// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则：
-// ESXi Host Client 反代（/esxi/* 剥前缀 + 绝对路径资源 + /ticket* WebSocket），
-// 作为该插件 CaddyRules 的默认值，管理员可在插件管理界面修改后重载。
-// 目标主机由 {env.ESXI_UPSTREAM} 在运行时解析（Caddy 进程环境变量）。
-const DefaultESXIAdminCaddyRules = `handle /esxi/* {
+// DefaultESXIAdminCaddyRulesV1 esxi-admin 插件无鉴权版的默认规则（历史值），
+// 仅用于 seed 迁移：识别旧默认规则并升级为带鉴权闸口的新默认值
+// （DefaultESXIAdminCaddyRules），精确匹配才覆盖，保留管理员自定义。
+const DefaultESXIAdminCaddyRulesV1 = `handle /esxi/* {
 	uri strip_prefix /esxi
 	reverse_proxy {env.ESXI_UPSTREAM}:443 {
 		transport http {
@@ -131,6 +130,161 @@ handle /sms/* {
 	}
 }
 handle /vsan/* {
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}`
+
+// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则：
+// ESXi Host Client 反代（/esxi/* 剥前缀 + 绝对路径资源 + /ticket* WebSocket），
+// 作为该插件 CaddyRules 的默认值，管理员可在插件管理界面修改后重载。
+// 每个 handle 先经 forward_auth 回调门户鉴权闸口（/api/v1/auth/gate?perm=esxi-admin:use，
+// 校验请求 cookie 中的 access/refresh 令牌与 esxi-admin:use 权限），
+// 未登录返回 401、无权限返回 403，放行后才反代到 ESXi。
+// 目标主机由 {env.ESXI_UPSTREAM} 在运行时解析（Caddy 进程环境变量）。
+const DefaultESXIAdminCaddyRules = `handle /esxi/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	uri strip_prefix /esxi
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -X-Frame-Options
+		header_down -Content-Security-Policy
+	}
+}
+handle /ui/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -X-Frame-Options
+		header_down -Content-Security-Policy
+	}
+}
+handle /screen* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /sdk* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /sts* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /ticket* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /vfeed/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /converter/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /eam/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /pbm/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /sms/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /vsan/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
 	reverse_proxy {env.ESXI_UPSTREAM}:443 {
 		transport http {
 			tls

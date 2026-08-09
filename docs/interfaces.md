@@ -67,6 +67,19 @@ GET /api/v1/auth/me
 - 响应：当前用户信息（无密码字段）+ `permissions`（当前用户的权限集合，排序确定，
   来自角色矩阵 `AttachPermissions` 装载；未装载时回退内置角色表）
 
+```
+GET /api/v1/auth/gate?perm=<permission>
+```
+
+- Caddy `forward_auth` 回调闸口（无需登录中间件，自行鉴权）；校验请求令牌并检查指定
+  权限，决定是否放行目标请求（如 ESXi 管理界面 `/esxi/*`）
+- 令牌来源按序：`Authorization: Bearer <access_token>` → `?token=<access_token>` →
+  `access_token` cookie → 回退 `refresh_token` cookie（双令牌续期，refresh token 即有效
+  会话凭据）；权限判定优先角色矩阵（与 `RequirePermission` 口径一致）
+- 响应：`200` 放行；`401` 未登录/登录过期、`403` 无权限（`perm` 缺失视为拒绝），
+  均为中文 HTML 提示页，`Cache-Control: no-store`
+- 页面点击"前往门户登录"为顶层跳转（`target="_top"`，适配 iframe 内拒绝页）
+
 ### 虚拟机管理（需认证）
 
 权限：所有路由需 `vm:view`；电源操作分别需 `vm:start`/`vm:stop`/`vm:restart`。

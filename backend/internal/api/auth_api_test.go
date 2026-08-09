@@ -45,7 +45,7 @@ func setupTestEnv(t *testing.T) *testEnv {
 	plugins := memory.NewPluginRepository()
 
 	router := NewRouter(tm, &HandlerSet{
-		Auth:   v1.NewAuthHandler(authProvider, tm),
+		Auth:   v1.NewAuthHandler(authProvider, tm, nil),
 		VM:     v1.NewVMHandler(services.NewVMService(vmRepo, provider), nil),
 		Menu:   v1.NewMenuHandler(plugins),
 		Plugin: v1.NewPluginHandler(plugins, nil, nil, nil),
@@ -193,6 +193,33 @@ func TestMe_WithoutToken(t *testing.T) {
 	w := doRequest(t, env.router, http.MethodGet, "/api/v1/auth/me", nil, "")
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
 	assert.Equal(t, float64(4003), unmarshalCode(t, w))
+}
+
+func TestGate_Route_NoToken(t *testing.T) {
+	env := setupTestEnv(t)
+
+	w := doRequest(t, env.router, http.MethodGet, "/api/v1/auth/gate?perm=esxi-admin:use", nil, "")
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestGate_Route_AdminAllowed(t *testing.T) {
+	env := setupTestEnv(t)
+	token := loginAndToken(t, env)
+
+	w := doRequest(t, env.router, http.MethodGet, "/api/v1/auth/gate?perm=esxi-admin:use", nil, token)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGate_Route_AccessCookie(t *testing.T) {
+	env := setupTestEnv(t)
+	token := loginAndToken(t, env)
+
+	// Caddy forward_auth 子请求只带 Cookie 头，闸口应能读取 access_token cookie
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/gate?perm=esxi-admin:use", nil)
+	req.AddCookie(&http.Cookie{Name: "access_token", Value: token})
+	w := httptest.NewRecorder()
+	env.router.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
 }
 
 func unmarshalCode(t *testing.T, w *httptest.ResponseRecorder) float64 {

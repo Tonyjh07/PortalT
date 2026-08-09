@@ -5,16 +5,12 @@
 #   2) 直接编辑下方顶级监听端口
 # 详见 docs/external-access.md「生产部署」与「Caddy 入口端口配置」。
 
-# ESXi Host Client 反代规则（iframe 嵌入 + 控制台）：
-#   - /esxi/* 剥前缀后指向 https://<esxi-host>，页面/静态资源相对路径因此可用
-#   - ESXi 资源与 API 走绝对路径 /ui/*、/sdk*、/sts*、/ticket* 等，需全部反代
-#   - /screen* 为 VM 控制台预览截图端点（漏配则预览图报 blob ERR_FILE_NOT_FOUND）
-#   - 必须剥除 X-Frame-Options: DENY（否则浏览器拒绝 iframe 加载）
-#   - 必须剥除 CSP upgrade-insecure-requests（否则 http 页面下子资源被强制升级 https）
-#   - /ticket* 为 VM 控制台 WebSocket 端点（wss://.../ticket/<ticket>），reverse_proxy 原生透传
-# 目标 ESXi 由 ESXI_UPSTREAM 环境变量控制（仓库不预设地址；只填主机名/IP，不带 scheme 与端口，
-# 上游固定走 443；未设置时 Caddy 仍正常启动，仅访问 /esxi/*、/ui/* 等路径请求期报错，
-# 避免静默反代到错误主机；.env.example 同步维护）
+# ESXi Host Client 反代规则由 esxi-admin 插件独家提供（后端落盘到
+# <PLUGIN_CADDY_DIR>/<id>.caddy 并热载），此处不再内置：
+#   - 插件的 CaddyRules 默认值见 backend/internal/pluginhost/caddy.go
+#     （DefaultESXIAdminCaddyRules，带门户鉴权闸口 forward_auth）
+#   - 停用/删除该插件即移除对应规则文件，/esxi/* 等路径不再反代，访问自然收回
+# 因此本片段只保留门户自身的后端与前端路由。
 (esxi_proxy_routes) {
 	handle /api/* {
 		reverse_proxy 127.0.0.1:8080
@@ -24,117 +20,6 @@
 	}
 	handle /healthz {
 		reverse_proxy 127.0.0.1:8080
-	}
-	handle /esxi/* {
-		uri strip_prefix /esxi
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -X-Frame-Options
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /ui/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -X-Frame-Options
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /screen* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /sdk* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /sts* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /ticket* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /vfeed/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /converter/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /eam/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /pbm/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /sms/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
-	}
-	handle /vsan/* {
-		reverse_proxy {env.ESXI_UPSTREAM}:443 {
-			transport http {
-				tls
-				tls_insecure_skip_verify
-			}
-			header_down -Content-Security-Policy
-		}
 	}
 	handle {
 		reverse_proxy 127.0.0.1:3001
@@ -159,6 +44,7 @@
 # 请勿用 tls internal——其 ECC 证书在 Windows schannel 握手失败（SEC_E_INTERNAL_ERROR）。
 # https://:8443 {
 # 	tls C:\path\to\portalt-local.crt C:\path\to\portalt-local.key
+# 	import plugins.d/*.caddy
 # 	import esxi_proxy_routes
 # }
 
@@ -167,5 +53,6 @@
 # 	tls {
 # 		dns cloudflare {env.CF_API_TOKEN}
 # 	}
+# 	import plugins.d/*.caddy
 # 	import esxi_proxy_routes
 # }

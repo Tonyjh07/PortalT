@@ -49,18 +49,27 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
 - **作用域与安全**：`caddy_rules` 为原始 Caddy 片段，仅 `plugin:manage`（管理员）可写；
   跨插件路径冲突由 `handle` 声明顺序决定。只应写本插件的 `handle` 块，不要包含站点监听、
   全局指令等（会破坏 Caddyfile 语法）。部署机建议规则落盘后做 `caddy validate` 校验。
-- 现状说明：`esxi-admin` 插件的 `caddy_rules` 默认值（`DefaultESXIAdminCaddyRules`）即 ESXi
-  反代规则的副本（含 `/esxi/*`、`/ui/*`、`/screen*`、`/sdk*`、`/ticket*` 等 handle，目标主机
-  由 `{env.ESXI_UPSTREAM}` 运行时解析）；内置 `caddy/Caddyfile` 暂仍保留 `esxi_proxy_routes`
-  （未瘦身，与插件规则双份共存且幂等）。「内置 Caddyfile 瘦身 + ESXi 规则迁入插件栏」为后续迁移项。
+- 现状说明：`esxi-admin` 插件的 `caddy_rules` 默认值（`DefaultESXIAdminCaddyRules`）是 ESXi
+  反代规则的**唯一来源**（含 `/esxi/*`、`/ui/*`、`/screen*`、`/sdk*`、`/ticket*` 等 handle，
+  目标主机由 `{env.ESXI_UPSTREAM}` 运行时解析）；**内置 `caddy/Caddyfile` 已瘦身、不再包含
+  ESXi handle**——停用/删除该插件即移除规则文件，`/esxi/*` 不再反代（访问自然收回）。
+- **鉴权闸口**：默认规则每个 handle 先经 `forward_auth 127.0.0.1:8080 { uri
+  /api/v1/auth/gate?perm=esxi-admin:use }` 回调门户鉴权（校验请求 cookie 中的
+  access/refresh 令牌 + `esxi-admin:use` 权限），未登录 401、无权限 403，放行才反代；
+  旧的无鉴权默认值（`DefaultESXIAdminCaddyRulesV1`）会被启动 seed 自动升级为新默认值
+  （精确匹配才覆盖，保留管理员自定义）。
+- 网关对身份透传不依赖 Caddy `copy_headers`——闸口直接读同源 cookie，无需注入额外头。
 
 ### 示例：esxi-admin
 
 `esxi-admin`（`/esxi-admin`，权限 `esxi-admin:use`，仅 admin 默认持有）由旧 native 插件迁移为
 **access 种子数据**：启动幂等 seed，`iframe_url = /esxi/ui/`（门户内相对路径），
 `caddy_rules` 内置 ESXi Host Client 反代默认值（`/esxi/*`、`/ui/*`、`/screen*` 等含
-`{env.ESXI_UPSTREAM}`）。前端插件页按 `/api/v1/platform` 三态渲染：
+`{env.ESXI_UPSTREAM}`，**每个 handle 带 `forward_auth` 鉴权闸口，见上文**）。
+前端插件页按 `/api/v1/platform` 三态渲染：
 未接入 ESXi（provider ≠ esxi）→ 占位提示；已接入 → iframe 嵌入；加载失败 → 提示检查上游配置。
+插件页挂载期间每 5 分钟静默续期 access cookie（access_token 仅 15 分钟，iframe 内
+`/esxi/*` 子请求经闸口校验），长会话不中断。
 
 ### access 插件权限
 

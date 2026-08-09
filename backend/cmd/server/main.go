@@ -152,7 +152,7 @@ func main() {
 	api.AppVersion = AppVersion
 	guacHandler := v1.GuacHandlerForEnv(vmService.GetVM, vmAccessRepo)
 	router := api.NewRouter(tm, &api.HandlerSet{
-		Auth:        v1.NewAuthHandler(authProvider, tm),
+		Auth:        v1.NewAuthHandler(authProvider, tm, roleLoader),
 		VM:          v1.NewVMHandler(vmService, vmAccessRepo),
 		Menu:        v1.NewMenuHandler(pluginRepo),
 		Plugin:      v1.NewPluginHandler(pluginRepo, permRepo, caddy, pluginManager),
@@ -257,8 +257,14 @@ func envSeconds(key string, fallback int64) time.Duration {
 }
 
 // seedDefaultAccessPlugins 幂等引导默认 access 插件（esxi-admin）。
-// 已存在时：仅当类型为 access 且 CaddyRules 为空时回填默认反代规则
-// （管理员配置优先，不覆盖）；记录不存在则创建。
+// 已存在时：
+//   - 类型为 access 且 CaddyRules 为空 → 回填默认反代规则（管理员配置优先，不覆盖）；
+//   - CaddyRules 归一化后等于旧默认（DefaultESXIAdminCaddyRulesV1，无鉴权版）→ 升级为
+//     带鉴权闸口的新默认规则（逐行去空白/统一换行后比较，容忍 CRLF 与 textarea 保存差异；
+//     仅匹配旧默认形态才覆盖，保留管理员自定义）；
+//   - CaddyRules 形似旧版 ESXi 反代（引用 {env.ESXI_UPSTREAM}）但未含鉴权闸口、又无法
+//     归一化匹配 → 打告警提示手动升级，避免无鉴权暴露被静默保留；
+// 记录不存在则创建。
 func seedDefaultAccessPlugins(ctx context.Context, repo ports.PluginRepository) error {
 	existing, err := repo.FindByID("esxi-admin")
 	if errors.Is(err, ports.ErrNotFound) {
@@ -278,9 +284,30 @@ func seedDefaultAccessPlugins(ctx context.Context, repo ports.PluginRepository) 
 	if err != nil {
 		return err
 	}
-	if domain.NormalizePluginType(existing.Type) == domain.PluginTypeAccess && existing.CaddyRules == "" {
-		existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
-		return repo.Save(existing)
+	if domain.NormalizePluginType(existing.Type) == domain.PluginTypeAccess {
+		if existing.CaddyRules == "" {
+			existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
+			return repo.Save(existing)
+		}
+		if normalizeRules(existing.CaddyRules) == normalizeRules(pluginhost.DefaultESXIAdminCaddyRulesV1) {
+			existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
+			return repo.Save(existing)
+		}
+		if strings.Contains(existing.CaddyRules, "{env.ESXI_UPSTREAM}") &&
+			!strings.Contains(existing.CaddyRules, "/api/v1/auth/gate") {
+			log.Printf("[seed] esxi-admin 插件 CaddyRules 疑似旧版无鉴权规则且与默认不匹配，" +
+				"未自动升级；请在插件管理页手动保存规则以接入鉴权闸口")
+		}
 	}
 	return nil
+}
+
+// normalizeRules 归一化 Caddy 规则串用于语义比较：逐行去除首尾空白并统一换行，
+// 容忍 CRLF/LF 差异与 textarea 保存时引入的空白，同时保留行内有效的指令缩进结构。
+func normalizeRules(s string) string {
+	lines := strings.Split(s, "\n")
+	for i, ln := range lines {
+		lines[i] = strings.TrimSpace(ln)
+	}
+	return strings.Join(lines, "\n")
 }
