@@ -82,6 +82,11 @@ type Manager struct {
 	repo    ports.PluginRepository
 	version string // PortalT 版本号，握手时下发给插件
 
+	// permRepo 权限字典（可选；nil 时跳过 manifest 权限校验）。
+	// 用于校验 manifest 声明的 Permission 存在于权限字典，防止篡改的
+	// manifest 声明任意权限绕过角色矩阵约束。
+	permRepo ports.PermissionRepository
+
 	mu    sync.Mutex
 	procs map[string]*Proc
 
@@ -105,6 +110,27 @@ func (m *Manager) SetLogger(f func(format string, args ...any)) {
 	if f != nil {
 		m.logf = f
 	}
+}
+
+// SetPermissionRepo 注入权限字典仓储（manifest 权限校验用；nil 可关闭校验）。
+func (m *Manager) SetPermissionRepo(pr ports.PermissionRepository) {
+	m.permRepo = pr
+}
+
+// validateManifestPermission 校验 manifest 声明的权限存在于权限字典
+// （与 access 插件管理 API 的 validatePerm 同语义）。未配置权限字典时跳过。
+func (m *Manager) validateManifestPermission(perm string) error {
+	if perm == "" || m.permRepo == nil {
+		return nil
+	}
+	ok, err := m.permRepo.Exists(perm)
+	if err != nil {
+		return fmt.Errorf("查询权限字典失败: %w", err)
+	}
+	if !ok {
+		return fmt.Errorf("插件声明了未知权限 %q（仅允许权限字典中的权限）", perm)
+	}
+	return nil
 }
 
 // Disabled 判断管理器是否处于禁用态（未配置 PLUGINS_DIR）。
@@ -334,6 +360,37 @@ func (m *Manager) Load(ctx context.Context) error {
 	return nil
 }
 
+// ensureBinaryInsideDir 校验插件可执行文件解析符号链接后仍位于插件目录内
+// （防路径逃逸；spawn 前调用）。插件目录本身缺失时直接通过（由 os.Stat 先行拦截）。
+func (m *Manager) ensureBinaryInsideDir(proc *Proc) error {
+	bin := proc.binary()
+	dir := proc.dir
+	if bin == "" || dir == "" {
+		return fmt.Errorf("插件 %s 可执行文件或目录路径为空", proc.id)
+	}
+	resolvedBin, err := filepath.EvalSymlinks(bin)
+	if err != nil {
+		return fmt.Errorf("解析插件可执行文件 %s: %w", bin, err)
+	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolvedDir = filepath.Clean(dir)
+	}
+	if !isPathInside(resolvedBin, resolvedDir) {
+		return fmt.Errorf("插件 %s 可执行文件位于插件目录之外，拒绝启动: %s", proc.id, resolvedBin)
+	}
+	return nil
+}
+
+// isPathInside 判断 path 是否位于 dir 内（含直接子级，规范化后比较）。
+func isPathInside(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
 // inspect 校验插件目录：manifest.json 合法且 ID 与目录名一致，可执行文件存在。
 // 返回可执行文件路径与解析后的 manifest。二进制约定名：plugin（Windows: plugin.exe）。
 func (m *Manager) inspect(pluginsDir, id string) (string, *pluginpkg.Manifest, error) {
@@ -358,6 +415,9 @@ func (m *Manager) inspect(pluginsDir, id string) (string, *pluginpkg.Manifest, e
 // upsert 按 manifest 同步插件表记录（native 类型）。
 // 新记录默认 is_active=false（管理员手动启用）；已存在记录保留 is_active 与 permission
 // （管理员配置优先），其余 manifest 字段更新。
+// 权限校验：manifest 声明的 Permission 仅在新记录（确会写入）时校验；
+// 已存在记录校验的是管理员存储的 Permission（其值本就须在权限字典内，且 updateNative
+// 已保证管理员只能写入字典内的权限），避免 manifest 里字典外的权限卡死热更新。
 func (m *Manager) upsert(manifest *pluginpkg.Manifest, bin string) error {
 	manifestJSON, err := manifestJSON(manifest)
 	if err != nil {
@@ -365,6 +425,9 @@ func (m *Manager) upsert(manifest *pluginpkg.Manifest, bin string) error {
 	}
 	existing, err := m.repo.FindByID(manifest.ID)
 	if errors.Is(err, ports.ErrNotFound) {
+		if err := m.validateManifestPermission(manifest.Permission); err != nil {
+			return err
+		}
 		return m.repo.Save(&domain.Plugin{
 			ID:           manifest.ID,
 			Name:         manifest.Name,
@@ -383,6 +446,9 @@ func (m *Manager) upsert(manifest *pluginpkg.Manifest, bin string) error {
 	}
 	if domain.NormalizePluginType(existing.Type) != domain.PluginTypeNative {
 		return fmt.Errorf("%w: ID %q 已存在且类型为 %s", ErrNotNative, manifest.ID, existing.Type)
+	}
+	if err := m.validateManifestPermission(existing.Permission); err != nil {
+		return err
 	}
 	existing.Name = manifest.Name
 	existing.Icon = manifest.Icon
@@ -449,6 +515,13 @@ func (m *Manager) spawn(ctx context.Context, proc *Proc) error {
 	if _, err := os.Stat(proc.binary()); err != nil {
 		m.updateDBStatus(proc.id, StatusMissing)
 		return ErrNotInstalled
+	}
+	// 防符号链接逃逸：可执行文件解析符号链接后必须仍位于插件目录内，
+	// 否则恶意符号链接可执行 PLUGINS_DIR 外的任意二进制。
+	if err := m.ensureBinaryInsideDir(proc); err != nil {
+		proc.setStatus(StatusError)
+		m.updateDBStatus(proc.id, StatusError)
+		return err
 	}
 	grpcPort, err := freePort()
 	if err != nil {

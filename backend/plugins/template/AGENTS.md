@@ -17,16 +17,23 @@
 
 | RPC | 方向 | 用途 |
 |-----|------|------|
-| `Handshake` | 宿主 → 插件（启动后立即） | 插件上报 HTTP 端口 + manifest，宿主返回启用状态 |
+| `Handshake` | 宿主 → 插件（启动后立即） | 宿主下发 manifest 与端口信息，插件确认，宿主返回启用状态 |
 | `Health` | 宿主 → 插件（周期） | 返回 healthy 表示正常运行 |
 | `Shutdown` | 宿主 → 插件（停用/升级/删除） | 插件清理资源后退出 |
 | `Notify` | 宿主 → 插件（事件） | enabled / disabled / config_changed / restarting |
 
 Handshake 响应中的 `enabled` 字段应被插件尊重（禁用时不工作）。
 
+### 端口分配
+
+- gRPC 与 HTTP 两个回环端口均由宿主分配，经环境变量
+  `PORTALT_PLUGIN_GRPC_PORT` / `PORTALT_PLUGIN_HTTP_PORT` 下发，插件绑定后
+  **经 Handshake 单向确认**（无需自行上报端口，宿主已下发）。
+- 请勿自选固定端口，避免与宿主分配冲突。
+
 ### HTTP 数据面
 
-- 插件自起 HTTP 服务器，端口在 Handshake 中上报（宿主校验回环）。
+- 插件自起 HTTP 服务器，监听宿主下发的 `PORTALT_PLUGIN_HTTP_PORT`（回环）。
 - **必须提供 `/healthz` 返回 `200 OK`**（宿主握手后探测，验证数据面可达）。
 - **仅监听 `127.0.0.1`**（宿主防 SSRF）。
 - 其余路径宿主编排到 `/native/<id>/*`（静态）和 `/api/v1/plugins/native/<id>/*`（鉴权 API）。

@@ -1,9 +1,10 @@
 // 插件控制面协议（v1）。
 //
 // 协议双方：插件进程实现本服务的全部 RPC（作为 gRPC server 监听本机回环端口），
-// PortalT 作为 gRPC client 主动连接（端口由 PortalT 分配并经由环境变量
-// PORTALT_PLUGIN_GRPC_PORT 下发）。控制面用于握手/健康探测/优雅停机/事件通知；
-// 数据面走插件自起的 HTTP 服务（端口在 Handshake 中上报，PortalT 校验回环后反代）。
+// PortalT 作为 gRPC client 主动连接。gRPC 与 HTTP 两个回环端口均由 PortalT 分配
+// 并经环境变量 PORTALT_PLUGIN_GRPC_PORT / PORTALT_PLUGIN_HTTP_PORT 下发，
+// 插件绑定后经 Handshake 单向确认（无需自行上报端口）；数据面走插件自起的
+// HTTP 服务（监听下发的 HTTP 端口），PortalT 反代暴露。
 syntax = "proto3";
 
 package plugin.v1;
@@ -12,8 +13,7 @@ option go_package = "portalt/proto/plugin/v1;pluginv1";
 
 // PluginControl 插件进程实现的控制面服务。
 service PluginControl {
-  // Handshake 启动握手：插件上报 manifest 元信息与 HTTP 数据面端口，
-  // PortalT 校验与插件表记录一致性，返回启用状态与下发的配置。
+  // Handshake 启动握手：PortalT 下发 manifest 与端口信息，插件确认并返回启用状态。
   rpc Handshake(HandshakeRequest) returns (HandshakeResponse);
   // Health 健康探测：PortalT 周期调用（间隔取 manifest 声明），
   // 判断插件进程是否存活并就绪。
@@ -33,13 +33,17 @@ message Manifest {
   int32 sort_order = 5;
   string permission = 6;
   int32 health_interval_seconds = 7;
+  // version 插件版本号（如 "1.2.0"），供管理界面展示与兼容性判断。
+  string version = 8;
+  // description 插件一句话描述，供管理界面展示。
+  string description = 9;
 }
 
 // HandshakeRequest 握手请求。
 message HandshakeRequest {
-  // manifest 插件自述元信息（应与 plugins 表 / manifest.json 一致）。
+  // manifest PortalT 下发的插件元信息（与 plugins 表 / manifest.json 一致）。
   Manifest manifest = 1;
-  // http_port 插件 HTTP 数据面端口（仅回环地址 127.0.0.1，PortalT 校验）。
+  // http_port PortalT 分配的插件 HTTP 数据面端口（回环地址 127.0.0.1）。
   int32 http_port = 2;
 }
 

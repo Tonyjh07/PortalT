@@ -181,7 +181,9 @@ func (h *PluginHandler) Create(c *gin.Context) {
 		return
 	}
 	if warn, err := h.syncCaddy(plugin); err != nil {
-		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "插件已注册，但 Caddy 规则落盘失败: "+err.Error())
+		// 插件已落库（成功），仅 Caddy 规则落盘失败：降级为提示而非 500，
+		// 避免 DB 与响应状态不一致（重试保存即可重新落盘）。
+		response.OKWithMessage(c, "插件已保存，但 Caddy 规则落盘失败: "+err.Error(), plugin)
 		return
 	} else if warn != "" {
 		response.OKWithMessage(c, warn, plugin)
@@ -231,7 +233,7 @@ func (h *PluginHandler) Update(c *gin.Context) {
 		return
 	}
 	if warn, err := h.syncCaddy(plugin); err != nil {
-		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "插件已更新，但 Caddy 规则落盘失败: "+err.Error())
+		response.OKWithMessage(c, "插件已保存，但 Caddy 规则落盘失败: "+err.Error(), plugin)
 		return
 	} else if warn != "" {
 		response.OKWithMessage(c, warn, plugin)

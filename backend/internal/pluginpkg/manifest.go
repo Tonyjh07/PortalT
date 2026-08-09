@@ -5,12 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 
 	pluginv1 "portalt/proto/plugin/v1"
 )
 
 // DefaultHealthInterval 健康探测默认间隔（秒）。
 const DefaultHealthInterval = 30
+
+// pluginIDPattern 插件 ID 字符集白名单：字母数字开头，仅含字母数字与 . _ -，
+// 与插件管理 API（api/v1/plugin.go）的 ID 约束一致。ID 用于 URL 路径、
+// plugins 表主键与 Caddy 规则文件名，防止特殊字符（含 ../）造成路径穿越或
+// 路由冲突。
+var pluginIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 // Manifest 原生插件 manifest.json 结构。
 // 字段与 proto 的 Manifest 一一对应，供启动握手时做一致性校验。
@@ -29,6 +36,10 @@ type Manifest struct {
 	Permission string `json:"permission"`
 	// HealthIntervalSeconds 健康探测间隔（秒），<=0 时用默认值
 	HealthIntervalSeconds int `json:"health_interval_seconds"`
+	// Version 插件版本号（如 "1.2.0"），管理界面展示与兼容性判断
+	Version string `json:"version"`
+	// Description 插件一句话描述，管理界面展示
+	Description string `json:"description"`
 }
 
 // Load 从路径读取并解析 manifest.json；文件缺失或内容非法返回错误。
@@ -54,6 +65,9 @@ func (m *Manifest) Validate() error {
 	}
 	if m.ID == "" {
 		return fmt.Errorf("manifest: 插件 ID 不能为空")
+	}
+	if !pluginIDPattern.MatchString(m.ID) {
+		return fmt.Errorf("manifest: 插件 ID %q 非法（仅允许字母数字及 . _ -，且须以字母或数字开头）", m.ID)
 	}
 	if m.Name == "" {
 		return fmt.Errorf("manifest %q: 名称不能为空", m.ID)
@@ -81,12 +95,14 @@ func (m *Manifest) ToProto() *pluginv1.Manifest {
 		return nil
 	}
 	return &pluginv1.Manifest{
-		Id:                   m.ID,
-		Name:                 m.Name,
-		Icon:                 m.Icon,
-		Route:                m.Route,
-		SortOrder:            int32(m.SortOrder),
-		Permission:           m.Permission,
+		Id:                    m.ID,
+		Name:                  m.Name,
+		Icon:                  m.Icon,
+		Route:                 m.Route,
+		SortOrder:             int32(m.SortOrder),
+		Permission:            m.Permission,
 		HealthIntervalSeconds: int32(m.HealthInterval()),
+		Version:               m.Version,
+		Description:           m.Description,
 	}
 }

@@ -183,9 +183,11 @@ async function save() {
     is_active: form.is_active,
   }
   if (!editing.value) {
-    await api('/plugins', { method: 'POST', body: payload })
+    const res: any = await api('/plugins', { method: 'POST', body: payload })
+    if (res?.__message) ElMessage.warning(res.__message)
   } else {
-    await api(`/plugins/${editing.value.id}`, { method: 'PUT', body: payload })
+    const res: any = await api(`/plugins/${editing.value.id}`, { method: 'PUT', body: payload })
+    if (res?.__message) ElMessage.warning(res.__message)
   }
   dialogVisible.value = false
   await load()
@@ -193,7 +195,8 @@ async function save() {
 
 async function remove(row: Plugin) {
   await ElMessageBox.confirm(`确定删除插件「${row.name}」？`, '删除确认', { type: 'warning' })
-  await api(`/plugins/${row.id}`, { method: 'DELETE' })
+  const res: any = await api(`/plugins/${row.id}`, { method: 'DELETE' })
+  if (res?.__message) ElMessage.warning(res.__message)
   await load()
 }
 

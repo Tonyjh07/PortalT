@@ -229,19 +229,32 @@ func (m *CaddyManager) WriteAll(plugins []*domain.Plugin) error {
 	// 期望存在的文件集合（<id>.caddy）
 	want := make(map[string]bool)
 	changed := false
+	failed := make([]string, 0)
 	for _, p := range plugins {
 		if p == nil {
 			continue
 		}
 		active := domain.NormalizePluginType(p.Type) == domain.PluginTypeAccess &&
 			p.IsActive && p.CaddyRules != ""
-		if active {
-			if err := m.writeFile(p.ID, p.CaddyRules); err != nil {
-				return err
-			}
-			want[p.ID+".caddy"] = true
-			changed = true
+		if !active {
+			// 不期望其规则文件（清理循环会移除磁盘上的旧文件）
+			continue
 		}
+		// 落盘前先校验（与单插件 Apply 路径一致），坏规则不落盘——
+		// 否则启动时原样写入，reload 失败会让整个 Caddy 拒绝热载，
+		// 所有插件规则一起失效。坏规则只跳过自身，不影响其他插件对齐。
+		// 校验/落盘失败者仍加入 want：保留其原规则文件（与 Apply 一致），
+		// 防止清理循环把此前正常落盘的旧文件删掉。
+		want[p.ID+".caddy"] = true
+		if err := m.validateCaddy(p.CaddyRules); err != nil {
+			failed = append(failed, p.ID)
+			continue
+		}
+		if err := m.writeFile(p.ID, p.CaddyRules); err != nil {
+			failed = append(failed, p.ID)
+			continue
+		}
+		changed = true
 	}
 	// 清理磁盘上多余文件（含孤儿文件）
 	entries, err := os.ReadDir(m.rulesDir)
@@ -262,6 +275,16 @@ func (m *CaddyManager) WriteAll(plugins []*domain.Plugin) error {
 			return fmt.Errorf("清理插件规则 %s: %w", e.Name(), err)
 		}
 		changed = true
+	}
+	if len(failed) > 0 {
+		// 有失败插件：磁盘仍是安全状态（失败者保留旧文件或本就没有）。
+		// 若有成功写入/清理则仍 reload 让已生效部分热载，最后再报告失败列表。
+		if changed {
+			if err := m.Reload(); err != nil {
+				return err
+			}
+		}
+		return fmt.Errorf("以下插件 Caddy 规则校验/落盘失败，已跳过（保留原规则文件）: %s", strings.Join(failed, ", "))
 	}
 	if !changed {
 		return nil

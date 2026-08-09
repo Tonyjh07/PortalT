@@ -103,7 +103,7 @@ func (r *PluginRepository) Save(p *domain.Plugin) error {
 	m.FromDomain(p)
 	return r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
-		DoUpdates: clause.AssignmentColumns([]string{"name", "icon", "route", "type", "iframe_url", "api_url", "endpoints", "caddy_rules", "permission", "sort_order", "is_active", "status", "manifest_json"}),
+		DoUpdates: clause.AssignmentColumns([]string{"name", "icon", "route", "type", "iframe_url", "api_url", "endpoints", "caddy_rules", "permission", "sort_order", "is_active", "status", "manifest_json", "updated_at"}),
 	}).Create(&m).Error
 }
 

@@ -134,6 +134,34 @@ func TestCaddyManager_WriteAllAligns(t *testing.T) {
 	}
 }
 
+func TestCaddyManager_WriteAllPartialFailureKeepsOldFile(t *testing.T) {
+	// 校验依赖 caddy 二进制：不可用时跳过（与 TestCaddyManager_Reload 的 sh 跳过同理）
+	if _, err := exec.LookPath("caddy"); err != nil {
+		t.Skip("caddy 不可用，跳过 WriteAll 部分失败测试")
+	}
+	// 插件 e 校验失败：仅跳过自身并保留其旧规则文件，其余插件正常对齐，
+	// 成功写入/清理仍走 Reload（reloadCmd 为空时 Reload 为 no-op，不依赖 sh）
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "e.caddy"), []byte("handle /e/* {}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "orphan.caddy"), []byte("x"), 0o644))
+	m := NewCaddyManager(dir, "")
+	plugins := []*domain.Plugin{
+		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {}"},
+		{ID: "e", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "bad-rules" /* 校验失败 */},
+	}
+	err := m.WriteAll(plugins)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "校验/落盘失败")
+
+	// e 旧规则文件保留（未被清理循环删除），a 已写入，孤儿文件已清理
+	_, err = os.Stat(filepath.Join(dir, "e.caddy"))
+	assert.NoError(t, err, "校验失败的插件应保留旧规则文件")
+	_, err = os.Stat(filepath.Join(dir, "a.caddy"))
+	assert.NoError(t, err, "成功插件应已落盘")
+	_, err = os.Stat(filepath.Join(dir, "orphan.caddy"))
+	assert.True(t, os.IsNotExist(err), "孤儿文件应被清理")
+}
+
 func TestCaddyManager_Reload(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("sh 不可用，跳过 reload 命令测试")

@@ -113,6 +113,8 @@ func main() {
 		pluginRepo,
 		AppVersion,
 	)
+	// manifest 声明的权限入库前校验权限字典（与 access 插件同约束）
+	pluginManager.SetPermissionRepo(permRepo)
 	if pluginManager.Enabled() {
 		if err := pluginManager.Start(ctx); err != nil {
 			log.Fatalf("原生插件宿主启动失败: %v", err)

@@ -335,14 +335,21 @@ func TestPlugin_CaddySync_ReloadFailureWarns(t *testing.T) {
 	assert.Equal(t, "handle /esxi/* {}", c.applied["esxi"])
 }
 
-func TestPlugin_CaddySync_ApplyFailure500(t *testing.T) {
+func TestPlugin_CaddySync_ApplyFailureWarns(t *testing.T) {
 	c := &stubCaddy{applyErr: errors.New("磁盘只读")}
-	r, _, _ := setupPluginWithCaddy(t, c)
+	r, repo, _ := setupPluginWithCaddy(t, c)
 	w := pluginDo(t, r, http.MethodPost, "/plugins", map[string]any{
 		"id": "esxi", "name": "ESXi", "route": "/esxi-admin", "type": "access",
 		"iframe_url": "/esxi/ui/", "caddy_rules": "handle /esxi/* {}", "is_active": true,
 	})
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	// 插件已落库（成功），Caddy 落盘失败降级为提示而非 500，避免 DB 与响应不一致
+	assert.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["message"].(string), "Caddy 规则落盘失败")
+	// 插件仍已保存
+	_, err := repo.FindByID("esxi")
+	assert.NoError(t, err)
 }
 
 func TestPlugin_CaddySync_DisableRemovesRules(t *testing.T) {

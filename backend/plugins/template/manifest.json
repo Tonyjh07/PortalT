@@ -6,5 +6,7 @@
   "route": "/my-plugin",
   "sort_order": 100,
   "permission": "",
-  "health_interval_seconds": 30
+  "health_interval_seconds": 30,
+  "version": "1.0.0",
+  "description": "示例插件"
 }
