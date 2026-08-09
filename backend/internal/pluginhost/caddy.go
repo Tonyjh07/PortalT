@@ -447,6 +447,19 @@ func (m *CaddyManager) SyncAll(plugins []*domain.Plugin) error {
 	return m.Reload()
 }
 
+// Enabled 是否配置了 Caddy 规则目录（rulesDir 非空）。未配置时
+// 落盘/重载均为空操作（本地 dev 无 Caddy）。
+func (m *CaddyManager) Enabled() bool {
+	return m != nil && m.rulesDir != ""
+}
+
+// ReloadEnabled 是否配置了 Caddy reload 命令（reloadCmd 非空）。
+// 规则目录已配置但 reload 命令未配置时，规则可落盘但不会热生效，
+// 调用方应明确提示而非静默声称已重载。
+func (m *CaddyManager) ReloadEnabled() bool {
+	return m != nil && m.reloadCmd != ""
+}
+
 // HasRuleFile 判断某插件的规则文件当前是否已落盘。未配置规则目录或文件不存在返回 false。
 func (m *CaddyManager) HasRuleFile(id string) bool {
 	if m == nil || m.rulesDir == "" {

@@ -194,10 +194,24 @@ func TestCaddyManager_UnconfiguredReloadNoOp(t *testing.T) {
 func TestCaddyManager_EmptyRulesDirNoOp(t *testing.T) {
 	// 未配置规则目录（本地 dev 无 Caddy）→ 不落盘不报错
 	m := NewCaddyManager("", "")
+	require.False(t, m.Enabled(), "未配置规则目录时 Enabled 应为 false")
+	require.False(t, m.ReloadEnabled(), "未配置 reload 命令时 ReloadEnabled 应为 false")
 	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
 	require.NoError(t, m.Reload())
 	require.NoError(t, m.Remove("demo"))
 	require.NoError(t, m.SyncAll([]*domain.Plugin{{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "x"}}))
+}
+
+func TestCaddyManager_ReloadEnabledFlag(t *testing.T) {
+	// 规则目录与 reload 命令独立配置：目录非空但命令为空时仅落盘能力可用
+	m := NewCaddyManager(t.TempDir(), "")
+	require.True(t, m.Enabled())
+	require.False(t, m.ReloadEnabled())
+	m2 := NewCaddyManager(t.TempDir(), "systemctl reload caddy")
+	require.True(t, m2.Enabled())
+	require.True(t, m2.ReloadEnabled())
+	require.False(t, (*CaddyManager)(nil).Enabled())
+	require.False(t, (*CaddyManager)(nil).ReloadEnabled())
 }
 
 func TestIsReloadFailed_Nil(t *testing.T) {

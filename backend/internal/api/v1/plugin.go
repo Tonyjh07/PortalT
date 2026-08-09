@@ -128,7 +128,8 @@ func (r *pluginRequest) toDomain(id string) *domain.Plugin {
 
 // syncCaddy 将 access 插件的 Caddy 规则落盘并触发 reload。
 // 停用（is_active=false）或清空规则时移除规则文件，避免停用插件仍占用反代路径。
-// 返回 (reload 警告, 错误)：错误 = 落盘/移除失败（500）；警告 = reload 失败（规则已落盘/移除）。
+// 返回 (警告, 错误)：错误 = 落盘/移除失败（500）；警告 = Caddy 未配置（规则仅保存）或
+// reload 失败（规则已落盘/移除）。
 func (h *PluginHandler) syncCaddy(p *domain.Plugin) (string, error) {
 	if h.caddy == nil || domain.NormalizePluginType(p.Type) != domain.PluginTypeAccess {
 		return "", nil
@@ -141,6 +142,11 @@ func (h *PluginHandler) syncCaddy(p *domain.Plugin) (string, error) {
 			return "插件已保存，但 Caddy reload 失败（规则已移除，将随下次 reload 生效）", nil
 		}
 		return "", nil
+	}
+	if !h.caddy.Enabled() {
+		// Caddy 规则目录未配置（本地 dev 无 Caddy）：规则仅保存在数据库，
+		// 明确提示而非静默成功，避免"保存了但没生效"的困惑。
+		return "Caddy 规则目录未配置（PLUGIN_CADDY_DIR 为空），规则已保存但未落盘，请在部署机配置后使用\"重载 Caddy\"", nil
 	}
 	if err := h.caddy.Apply(p.ID, p.CaddyRules); err != nil {
 		return "", err
@@ -338,10 +344,12 @@ func (h *PluginHandler) Delete(c *gin.Context) {
 // ReloadCaddy POST /api/v1/plugins/caddy-reload
 // 以数据库为准全量对齐 access 插件的 Caddy 规则并触发 reload（补写未落盘规则、
 // 清理孤儿文件）。用于规则保存后 reload 失败、或手工改盘后的一次性主动修复。
-// 返回 200；规则未完全生效（部分校验失败/reload 失败）时以 __message 携带告警。
+// 规则目录未配置（PLUGIN_CADDY_DIR 为空）时返回 503 明确提示，避免静默空操作
+// 让"重载"看似成功实则什么都没做；reload 命令未配置时以 __message 携带告警。
 func (h *PluginHandler) ReloadCaddy(c *gin.Context) {
-	if h.caddy == nil {
-		response.Error(c, http.StatusServiceUnavailable, response.CodeServerError, "Caddy 规则管理未启用")
+	if h.caddy == nil || !h.caddy.Enabled() {
+		response.Error(c, http.StatusServiceUnavailable, response.CodeServerError,
+			"Caddy 规则目录未配置（PLUGIN_CADDY_DIR 为空），无法重载：规则不会落盘，请在部署机配置 PLUGIN_CADDY_DIR 后重启后端")
 		return
 	}
 	plugins, err := h.plugins.FindAll()
@@ -357,6 +365,12 @@ func (h *PluginHandler) ReloadCaddy(c *gin.Context) {
 			return
 		}
 		response.OKWithMessage(c, "Caddy 规则对齐未完全完成: "+err.Error(), nil)
+		return
+	}
+	if !h.caddy.ReloadEnabled() {
+		// 规则目录已配置但 reload 命令未配置：规则已对齐落盘，但未热生效，
+		// 明确提示而非静默声称已重载。
+		response.OKWithMessage(c, "Caddy 规则已对齐落盘，但未配置 reload 命令（CADDY_RELOAD_CMD 为空），未触发重载；请在部署机配置后重启后端", gin.H{"reloaded": false})
 		return
 	}
 	response.OK(c, gin.H{"reloaded": true})

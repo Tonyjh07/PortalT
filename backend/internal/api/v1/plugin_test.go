@@ -38,12 +38,28 @@ func setupPlugin(t *testing.T) (*gin.Engine, *memory.PluginRepository) {
 
 // stubCaddy 可编程的 Caddy 应用器桩，记录调用并模拟失败。
 type stubCaddy struct {
-	applied  map[string]string
-	removed  []string
-	reloads  int
-	applyErr error
-	relErr   error
-	syncErr  error
+	applied       map[string]string
+	removed       []string
+	reloads       int
+	applyErr      error
+	relErr        error
+	syncErr       error
+	enabled       *bool
+	reloadEnabled *bool
+}
+
+func (s *stubCaddy) Enabled() bool {
+	if s.enabled == nil {
+		return true
+	}
+	return *s.enabled
+}
+
+func (s *stubCaddy) ReloadEnabled() bool {
+	if s.reloadEnabled == nil {
+		return true
+	}
+	return *s.reloadEnabled
 }
 
 // stubNativeHost 可编程的 native 宿主桩，记录生命周期调用并模拟失败。
@@ -368,9 +384,46 @@ func TestPlugin_CaddySync_ReloadFailureWarns(t *testing.T) {
 }
 
 func TestPlugin_CaddyReload_NotConfigured(t *testing.T) {
+	// 后端未装配 Caddy 管理器（h.caddy == nil）→ 503
 	r, _ := setupPlugin(t)
 	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestPlugin_CaddyReload_RulesDirNotConfigured(t *testing.T) {
+	// 回归：装配了 Caddy 管理器但 PLUGIN_CADDY_DIR 为空（本地 dev 无 Caddy）
+	// 时，重载曾是静默空操作（200 + reloaded:true），规则不落盘却看似成功。
+	// 现应返回 503 并明确提示配置缺失。
+	enabled := false
+	c := &stubCaddy{enabled: &enabled}
+	r, _, _ := setupPluginWithCaddy(t, c)
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["message"].(string), "PLUGIN_CADDY_DIR")
+	assert.Equal(t, 0, c.reloads)
+}
+
+func TestPlugin_CaddyReload_NoReloadCmd(t *testing.T) {
+	// 规则目录已配置但 CADDY_RELOAD_CMD 为空：规则对齐落盘，但未热生效，
+	// 应返回 200 + reloaded:false 并明确提示，而非静默声称已重载。
+	reloadEnabled := false
+	c := &stubCaddy{reloadEnabled: &reloadEnabled}
+	r, repo, _ := setupPluginWithCaddy(t, c)
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "esxi", Name: "ESXi", Route: "/esxi-admin", Type: domain.PluginTypeAccess,
+		IframeURL: "/esxi/ui/", CaddyRules: "handle /esxi/* {}", IsActive: true,
+	}))
+
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	// 规则仍应对齐落盘（HasRuleFile 变 true，前端状态可推进到"已生效"）
+	assert.Equal(t, "handle /esxi/* {}", c.applied["esxi"])
+	assert.Equal(t, false, body["data"].(map[string]any)["reloaded"])
+	assert.Contains(t, body["message"].(string), "CADDY_RELOAD_CMD")
 }
 
 func TestPlugin_CaddyReload_AlignsAndReloads(t *testing.T) {

@@ -110,8 +110,15 @@ type CaddyApplier interface {
 	Remove(id string) error
 	// Reload 触发 Caddy 热加载；命令未配置或不可用时静默成功（仅落盘）。
 	Reload() error
+	// ReloadEnabled 是否配置了 Caddy reload 命令（CADDY_RELOAD_CMD 非空）。
+	// 规则目录已配置但 reload 命令未配置时，规则可落盘但不会热生效，
+	// 调用方应明确提示而非静默声称已重载。
+	ReloadEnabled() bool
 	// HasRuleFile 判断某插件的规则文件当前是否已落盘（access 插件，供管理界面展示状态）。
 	HasRuleFile(id string) bool
+	// Enabled 是否配置了 Caddy 规则目录（PLUGIN_CADDY_DIR 非空）。未配置时
+	// 落盘/重载均为空操作（本地 dev 无 Caddy），调用方应明确提示而非静默成功。
+	Enabled() bool
 	// SyncAll 以插件列表为准全量对齐规则文件（启用且含规则的 access 插件写入，
 	// 其余含磁盘孤儿文件移除），最后仅 reload 一次。幂等；用于启动引导与手动重载。
 	SyncAll(plugins []*domain.Plugin) error

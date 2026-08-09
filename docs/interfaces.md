@@ -128,7 +128,7 @@ POST   /api/v1/plugins/caddy-reload → 手动全量重载 Caddy（见下）
 - `iframe_url` 允许 `http(s)` 或门户内相对路径（如 `/esxi/ui/`，由 Caddy 规则反代）
 - `api_url` 须为 `http(s)`；`endpoints` 为方法+路径白名单（路径以 `/` 开头）
 - `caddy_rules`：原始 Caddy `handle` 片段，保存时落盘 `plugins.d/<id>.caddy` 并触发 reload
-  （`PLUGIN_CADDY_DIR` 为空则跳过；reload 失败返回告警文案但插件已保存）
+  （`PLUGIN_CADDY_DIR` 为空时不落盘、返回告警"规则已保存但未落盘"；reload 失败返回告警文案但插件已保存）
 - 插件声明的 `permission` 必须存在于权限字典；access 删除/停用会同步移除对应 Caddy 规则文件
 - `native` 类型不能通过接口创建/删除（记录由插件宿主按 manifest 自动 upsert）；
   `PUT` 仅接受 `permission` 与 `is_active`（其余字段以 manifest 为准），`is_active` 变更经宿主
@@ -136,7 +136,9 @@ POST   /api/v1/plugins/caddy-reload → 手动全量重载 Caddy（见下）
 - `POST /api/v1/plugins/caddy-reload`：以数据库为准**全量对齐** access 插件的 Caddy 规则
   （补写启用且含规则但未落盘的、清理停用/删除后残留的孤儿规则文件）并触发一次 reload；
   用于规则保存后 reload 失败、或手工改盘后的一次性主动修复。成功返回 200；
-  规则未完全生效（部分校验失败/reload 失败）时返回 200 + `message` 告警
+  规则未完全生效（部分校验失败/reload 失败）时返回 200 + `message` 告警；
+  `PLUGIN_CADDY_DIR` 为空时返回 **503**（规则不会落盘，明确提示而非静默空操作）；
+  `CADDY_RELOAD_CMD` 为空时返回 200 + `message` 告警且 `reloaded:false`（规则已对齐落盘但未热生效）
 
 ### access 插件标准 API 代理（需认证 + `plugin:view`）
 
