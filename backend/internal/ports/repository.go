@@ -112,6 +112,9 @@ type CaddyApplier interface {
 	Reload() error
 	// HasRuleFile 判断某插件的规则文件当前是否已落盘（access 插件，供管理界面展示状态）。
 	HasRuleFile(id string) bool
+	// SyncAll 以插件列表为准全量对齐规则文件（启用且含规则的 access 插件写入，
+	// 其余含磁盘孤儿文件移除），最后仅 reload 一次。幂等；用于启动引导与手动重载。
+	SyncAll(plugins []*domain.Plugin) error
 }
 
 // NativeHost native 插件进程宿主接口（由 pluginhost.Manager 实现）。

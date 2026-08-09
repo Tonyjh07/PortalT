@@ -108,9 +108,9 @@ func TestCaddyManager_Remove(t *testing.T) {
 	require.NoError(t, m.Remove("demo"))
 }
 
-func TestCaddyManager_WriteAllAligns(t *testing.T) {
+func TestCaddyManager_SyncAllAligns(t *testing.T) {
 	dir := t.TempDir()
-	// 预先放置孤儿文件（旧插件残留），WriteAll 应清理
+	// 预先放置孤儿文件（旧插件残留），SyncAll 应清理
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "orphan.caddy"), []byte("x"), 0o644))
 	m := NewCaddyManager(dir, "")
 	plugins := []*domain.Plugin{
@@ -119,7 +119,7 @@ func TestCaddyManager_WriteAllAligns(t *testing.T) {
 		{ID: "c", Type: domain.PluginTypeNative, IsActive: true, CaddyRules: "handle /c/* {}"},
 		{ID: "d", Type: domain.PluginTypeAccess, IsActive: false, CaddyRules: "handle /d/* {}"},
 	}
-	require.NoError(t, m.WriteAll(plugins))
+	require.NoError(t, m.SyncAll(plugins))
 
 	cases := map[string]bool{
 		"a.caddy":     true,
@@ -134,10 +134,10 @@ func TestCaddyManager_WriteAllAligns(t *testing.T) {
 	}
 }
 
-func TestCaddyManager_WriteAllPartialFailureKeepsOldFile(t *testing.T) {
+func TestCaddyManager_SyncAllPartialFailureKeepsOldFile(t *testing.T) {
 	// 校验依赖 caddy 二进制：不可用时跳过（与 TestCaddyManager_Reload 的 sh 跳过同理）
 	if _, err := exec.LookPath("caddy"); err != nil {
-		t.Skip("caddy 不可用，跳过 WriteAll 部分失败测试")
+		t.Skip("caddy 不可用，跳过 SyncAll 部分失败测试")
 	}
 	// 插件 e 校验失败：仅跳过自身并保留其旧规则文件，其余插件正常对齐，
 	// 成功写入/清理仍走 Reload（reloadCmd 为空时 Reload 为 no-op，不依赖 sh）
@@ -149,7 +149,7 @@ func TestCaddyManager_WriteAllPartialFailureKeepsOldFile(t *testing.T) {
 		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {}"},
 		{ID: "e", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "bad-rules" /* 校验失败 */},
 	}
-	err := m.WriteAll(plugins)
+	err := m.SyncAll(plugins)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "校验/落盘失败")
 
@@ -197,7 +197,7 @@ func TestCaddyManager_EmptyRulesDirNoOp(t *testing.T) {
 	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
 	require.NoError(t, m.Reload())
 	require.NoError(t, m.Remove("demo"))
-	require.NoError(t, m.WriteAll([]*domain.Plugin{{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "x"}}))
+	require.NoError(t, m.SyncAll([]*domain.Plugin{{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "x"}}))
 }
 
 func TestIsReloadFailed_Nil(t *testing.T) {

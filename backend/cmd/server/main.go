@@ -102,7 +102,7 @@ func main() {
 	// 启动时把启用且含规则的 access 插件写入 plugins.d 并 reload 一次
 	if all, err := pluginRepo.FindAll(); err != nil {
 		log.Printf("警告: 读取插件列表失败: %v", err)
-	} else if err := caddy.WriteAll(all); err != nil {
+	} else if err := caddy.SyncAll(all); err != nil {
 		log.Printf("警告: Caddy 插件规则同步失败: %v", err)
 	}
 

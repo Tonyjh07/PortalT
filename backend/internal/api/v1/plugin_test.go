@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"portalt/internal/adapters/memory"
 	"portalt/internal/domain"
+	"portalt/internal/pluginhost"
 	"portalt/internal/ports"
 )
 
@@ -30,6 +32,7 @@ func setupPlugin(t *testing.T) (*gin.Engine, *memory.PluginRepository) {
 	r.PUT("/plugins/:id", handler.Update)
 	r.DELETE("/plugins/:id", handler.Delete)
 	r.GET("/plugins", handler.List)
+	r.POST("/plugins/caddy-reload", handler.ReloadCaddy)
 	return r, repo
 }
 
@@ -40,6 +43,7 @@ type stubCaddy struct {
 	reloads  int
 	applyErr error
 	relErr   error
+	syncErr  error
 }
 
 // stubNativeHost 可编程的 native 宿主桩，记录生命周期调用并模拟失败。
@@ -102,6 +106,24 @@ func (s *stubCaddy) Reload() error {
 func (s *stubCaddy) HasRuleFile(id string) bool {
 	_, ok := s.applied[id]
 	return ok
+}
+
+func (s *stubCaddy) SyncAll(plugins []*domain.Plugin) error {
+	if s.syncErr != nil {
+		return s.syncErr
+	}
+	if s.applied == nil {
+		s.applied = make(map[string]string)
+	}
+	for _, p := range plugins {
+		if p == nil || domain.NormalizePluginType(p.Type) != domain.PluginTypeAccess ||
+			!p.IsActive || p.CaddyRules == "" {
+			continue
+		}
+		s.applied[p.ID] = p.CaddyRules
+	}
+	s.reloads++
+	return nil
 }
 
 func pluginDo(t *testing.T, r *gin.Engine, method, path string, body any) *httptest.ResponseRecorder {
@@ -277,7 +299,17 @@ func setupPluginWithCaddy(t *testing.T, c *stubCaddy) (*gin.Engine, *memory.Plug
 	r.PUT("/plugins/:id", handler.Update)
 	r.GET("/plugins", handler.List)
 	r.DELETE("/plugins/:id", handler.Delete)
+	r.POST("/plugins/caddy-reload", handler.ReloadCaddy)
 	return r, repo, c
+}
+
+// failPluginRepo 包装插件仓储，FindAll 恒失败（测 ReloadCaddy 查询失败路径）。
+type failPluginRepo struct {
+	ports.PluginRepository
+}
+
+func (f *failPluginRepo) FindAll() ([]*domain.Plugin, error) {
+	return nil, errors.New("boom")
 }
 
 func TestPlugin_CaddySync_CreateApplyReload(t *testing.T) {
@@ -333,6 +365,89 @@ func TestPlugin_CaddySync_ReloadFailureWarns(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Contains(t, body["message"].(string), "reload 失败")
 	assert.Equal(t, "handle /esxi/* {}", c.applied["esxi"])
+}
+
+func TestPlugin_CaddyReload_NotConfigured(t *testing.T) {
+	r, _ := setupPlugin(t)
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+}
+
+func TestPlugin_CaddyReload_AlignsAndReloads(t *testing.T) {
+	r, repo, c := setupPluginWithCaddy(t, &stubCaddy{})
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "esxi", Name: "ESXi", Route: "/esxi-admin", Type: domain.PluginTypeAccess,
+		IframeURL: "/esxi/ui/", CaddyRules: "handle /esxi/* {}", IsActive: true,
+	}))
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "old", Name: "旧", Route: "/old", Type: domain.PluginTypeAccess,
+		CaddyRules: "handle /old/* {}", IsActive: false,
+	}))
+
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, c.reloads)
+	assert.Equal(t, "handle /esxi/* {}", c.applied["esxi"])
+	_, hasOld := c.applied["old"] // 停用插件不应写盘
+	assert.False(t, hasOld)
+}
+
+func TestPlugin_CaddyReload_PartialWarning(t *testing.T) {
+	r, repo, _ := setupPluginWithCaddy(t, &stubCaddy{syncErr: errors.New("部分插件校验失败")})
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "esxi", Name: "ESXi", Route: "/esxi-admin", Type: domain.PluginTypeAccess,
+		IframeURL: "/esxi/ui/", CaddyRules: "handle /esxi/* {}", IsActive: true,
+	}))
+
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	// 对齐未完全完成（非 reload 失败）→ 200 + 告警消息
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["message"].(string), "对齐未完全完成")
+}
+
+func TestPlugin_CaddyReload_ReloadFailureWarns(t *testing.T) {
+	// reload 失败（ErrReloadFailed）应提示"已对齐但未热生效"
+	r, repo, _ := setupPluginWithCaddy(t, &stubCaddy{
+		syncErr: fmt.Errorf("systemctl reload 失败: %w", pluginhost.ErrReloadFailed),
+	})
+	require.NoError(t, repo.Save(&domain.Plugin{
+		ID: "esxi", Name: "ESXi", Route: "/esxi-admin", Type: domain.PluginTypeAccess,
+		IframeURL: "/esxi/ui/", CaddyRules: "handle /esxi/* {}", IsActive: true,
+	}))
+
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	assert.Contains(t, body["message"].(string), "reload 失败")
+}
+
+func TestPlugin_CaddyReload_RouteCoexistsWithRestart(t *testing.T) {
+	// 回归：静态 /plugins/caddy-reload 与 /plugins/:id/restart 同 router 注册不应冲突
+	gin.SetMode(gin.TestMode)
+	repo := memory.NewPluginRepository()
+	handler := NewPluginHandler(repo, nil, &stubCaddy{}, nil)
+	r := gin.New()
+	r.POST("/plugins/:id/restart", handler.Restart)
+	r.POST("/plugins/caddy-reload", handler.ReloadCaddy)
+
+	require.NotPanics(t, func() {
+		w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+		assert.Equal(t, http.StatusOK, w.Code)
+	})
+}
+
+func TestPlugin_CaddyReload_ListFailure(t *testing.T) {
+	// FindAll 失败 → 500
+	gin.SetMode(gin.TestMode)
+	handler := NewPluginHandler(&failPluginRepo{memory.NewPluginRepository()}, nil, &stubCaddy{}, nil)
+	r := gin.New()
+	r.POST("/plugins/caddy-reload", handler.ReloadCaddy)
+
+	w := pluginDo(t, r, http.MethodPost, "/plugins/caddy-reload", nil)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
 func TestPlugin_CaddySync_ApplyFailureWarns(t *testing.T) {

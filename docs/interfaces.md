@@ -118,6 +118,7 @@ POST   /api/v1/plugins     → 注册插件（id 可选，缺省自动生成；n
 PUT    /api/v1/plugins/:id → 更新插件（access 全字段覆盖；native 仅允许改 permission/is_active，启停经宿主）
 DELETE /api/v1/plugins/:id → 删除插件（同时移除其 Caddy 规则文件并 reload；native 不可删除）
 POST   /api/v1/plugins/:id/restart → 重启 native 插件进程（仅 native）
+POST   /api/v1/plugins/caddy-reload → 手动全量重载 Caddy（见下）
 ```
 
 - 请求体：`{"id","name","icon","route","type","iframe_url","api_url","endpoints","caddy_rules","permission","sort_order","is_active"}`
@@ -132,6 +133,10 @@ POST   /api/v1/plugins/:id/restart → 重启 native 插件进程（仅 native�
 - `native` 类型不能通过接口创建/删除（记录由插件宿主按 manifest 自动 upsert）；
   `PUT` 仅接受 `permission` 与 `is_active`（其余字段以 manifest 为准），`is_active` 变更经宿主
   触发 spawn/停进程（未配置 `PLUGINS_DIR` 时返回 500）；`POST /:id/restart` 重启 native 进程
+- `POST /api/v1/plugins/caddy-reload`：以数据库为准**全量对齐** access 插件的 Caddy 规则
+  （补写启用且含规则但未落盘的、清理停用/删除后残留的孤儿规则文件）并触发一次 reload；
+  用于规则保存后 reload 失败、或手工改盘后的一次性主动修复。成功返回 200；
+  规则未完全生效（部分校验失败/reload 失败）时返回 200 + `message` 告警
 
 ### access 插件标准 API 代理（需认证 + `plugin:view`）
 

@@ -11,6 +11,7 @@ const loading = ref(false)
 const plugins = ref<Plugin[]>([])
 const dialogVisible = ref(false)
 const editing = ref<Plugin | null>(null)
+const caddyLoading = ref(false)
 
 const typeLabels: Record<PluginType, string> = {
   access: '访问接入',
@@ -118,6 +119,22 @@ async function restartNative(row: Plugin) {
   await load()
 }
 
+// reloadCaddy 手动触发 Caddy 全量重载：后端以数据库为准对齐 access 插件规则
+// （补写未落盘规则、清理孤儿文件）并 reload，用于规则保存后 reload 失败等一次性修复。
+async function reloadCaddy() {
+  caddyLoading.value = true
+  try {
+    const res: any = await api('/plugins/caddy-reload', { method: 'POST' })
+    if (res?.__message) ElMessage.warning(res.__message)
+    else ElMessage.success('Caddy 已重载，插件规则已对齐')
+  } catch (err) {
+    ElMessage.error((err as { data?: { message?: string } })?.data?.message || 'Caddy 重载失败')
+  } finally {
+    caddyLoading.value = false
+    await load()
+  }
+}
+
 function openCreate() {
   editing.value = null
   resetForm()
@@ -217,7 +234,10 @@ function removeEndpoint(i: number) {
         <h2>插件管理</h2>
         <p class="page-sub">动态菜单 / 嵌入访问 / 原生插件配置（plugin:manage）</p>
       </div>
-      <el-button v-if="canManage" type="primary" @click="openCreate">新建插件</el-button>
+      <div class="head-actions">
+        <el-button v-if="canManage" :loading="caddyLoading" @click="reloadCaddy">重载 Caddy</el-button>
+        <el-button v-if="canManage" type="primary" @click="openCreate">新建插件</el-button>
+      </div>
     </div>
 
     <el-card shadow="never">
@@ -398,6 +418,18 @@ route /* {
 </template>
 
 <style scoped>
+.page-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .endpoints-editor {
   width: 100%;
 }

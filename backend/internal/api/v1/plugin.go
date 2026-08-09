@@ -11,6 +11,7 @@ import (
 	"portalt/internal/adapters/auth"
 	"portalt/internal/api/response"
 	"portalt/internal/domain"
+	"portalt/internal/pluginhost"
 	"portalt/internal/ports"
 )
 
@@ -332,6 +333,33 @@ func (h *PluginHandler) Delete(c *gin.Context) {
 		}
 	}
 	response.OK(c, nil)
+}
+
+// ReloadCaddy POST /api/v1/plugins/caddy-reload
+// 以数据库为准全量对齐 access 插件的 Caddy 规则并触发 reload（补写未落盘规则、
+// 清理孤儿文件）。用于规则保存后 reload 失败、或手工改盘后的一次性主动修复。
+// 返回 200；规则未完全生效（部分校验失败/reload 失败）时以 __message 携带告警。
+func (h *PluginHandler) ReloadCaddy(c *gin.Context) {
+	if h.caddy == nil {
+		response.Error(c, http.StatusServiceUnavailable, response.CodeServerError, "Caddy 规则管理未启用")
+		return
+	}
+	plugins, err := h.plugins.FindAll()
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, response.CodeServerError, "查询插件失败")
+		return
+	}
+	if err := h.caddy.SyncAll(plugins); err != nil {
+		// reload 失败（规则已落盘，仅未热生效）与对齐未完成（部分插件校验/落盘
+		// 失败或磁盘操作异常）分开提示，与 syncCaddy"落盘 vs reload"口径一致。
+		if pluginhost.IsReloadFailed(err) {
+			response.OKWithMessage(c, "Caddy 规则已对齐，但 reload 失败（规则已落盘，将随下次 reload 生效）: "+err.Error(), nil)
+			return
+		}
+		response.OKWithMessage(c, "Caddy 规则对齐未完全完成: "+err.Error(), nil)
+		return
+	}
+	response.OK(c, gin.H{"reloaded": true})
 }
 
 // pluginListItem 插件列表项：在领域实体基础上附加计算字段（供管理界面展示）。

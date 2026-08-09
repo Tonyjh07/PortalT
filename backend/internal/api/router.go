@@ -93,6 +93,7 @@ func NewRouter(tm ports.TokenManager, hs *HandlerSet) *gin.Engine {
 		plugins.PUT("/:id", hs.Plugin.Update)
 		plugins.DELETE("/:id", hs.Plugin.Delete)
 		plugins.POST("/:id/restart", hs.Plugin.Restart)
+		plugins.POST("/caddy-reload", hs.Plugin.ReloadCaddy)
 
 		// 脚本插件标准 API 代理（plugin:view + 插件自身权限 + 端点白名单）
 		if hs.PluginProxy != nil {

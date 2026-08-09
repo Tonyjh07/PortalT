@@ -371,9 +371,10 @@ func (m *CaddyManager) Remove(id string) error {
 	return os.Remove(path)
 }
 
-// WriteAll 启动时全量对齐：启用且含 CaddyRules 的 access 插件写入规则文件，
-// 其余（含磁盘上无对应插件的孤儿文件）移除，最后仅 reload 一次。幂等。
-func (m *CaddyManager) WriteAll(plugins []*domain.Plugin) error {
+// SyncAll 以插件列表为准全量对齐规则文件（启动引导与手动重载均走此路径）：
+// 启用且含 CaddyRules 的 access 插件写入规则文件，其余（含磁盘上无对应插件的
+// 孤儿文件）移除，最后仅 reload 一次。幂等。
+func (m *CaddyManager) SyncAll(plugins []*domain.Plugin) error {
 	if m == nil {
 		return nil
 	}

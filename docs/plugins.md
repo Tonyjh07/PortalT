@@ -42,7 +42,10 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
     但提示"将随下次 reload 生效"
 - 删除插件会移除对应 `<id>.caddy` 文件并 reload；**停用（`is_active=false`）或清空 `caddy_rules`**
   同样移除其文件（停用插件不再占用反代路径）。
-  启动时 `WriteAll` 全量对齐：启用且含规则的 access 插件写入，磁盘上多余/孤儿文件清理，随后 reload 一次。
+  启动时 `SyncAll` 全量对齐：启用且含规则的 access 插件写入，磁盘上多余/孤儿文件清理，随后 reload 一次。
+- 管理页头部"**重载 Caddy**"按钮走 `POST /api/v1/plugins/caddy-reload`（`plugin:manage`）：
+  以数据库为准**全量对齐**规则文件并 reload（补写未落盘、清理孤儿文件），用于规则保存后
+  reload 失败或手工改盘后的一次性主动修复；reload 失败提示"已落盘、将随下次 reload 生效"。
 - 落盘前若环境存在 `caddy` 可执行文件且规则不含 `{env.*}` 占位符，后端先 `caddy validate`
   （包装为 `:0` 最小站点）校验片段语法，校验失败不落盘——避免语法错误规则残留导致后续 reload 持续失败。
   含 `{env.*}` 占位符的规则交由 Caddy 加载期处理（其值依赖运行时环境，如 `{env.ESXI_UPSTREAM}`）。
