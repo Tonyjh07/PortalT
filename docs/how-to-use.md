@@ -63,11 +63,16 @@ bash deploy/install.sh --yes    # 全默认非交互（postgres/guacd 容器 + m
 ### 3.2 日常更新
 
 ```bash
-cd PortalT && git pull && bash deploy/update.sh
+cd PortalT && bash deploy/update.sh
 ```
 
 - 流程：git pull → 同步数据库迁移文件 → 重编译后端/重构建前端 → 备份旧产物
   → 替换部署 → 重启服务 → 健康检查，**任一步失败自动回滚**；
+- **无新提交时不更新**（提示「已是最新版本」直接退出）；需强制重建同版本代码加 `--force`；
+- 常用参数（可组合）：`--skip-pull` 跳过拉取、`--skip-backend` / `--skip-frontend`
+  / `--skip-plugins` 跳过对应重建、`--skip-restart` 不重启、`--skip-health` 跳过健康检查；
+- **回滚**：`bash deploy/update.sh --rollback` 回滚到上一版本，
+  `--rollback 2` 回滚两个版本（最多 2），来源为更新时自动保留的历史备份；
 - 不触碰 `portalt.env` / 数据库 / 容器数据；
 - 以下手动流程（§4 起）仅用于自定义改造场景。
 

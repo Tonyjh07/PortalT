@@ -10,6 +10,8 @@
 #   --skip-plugins|-spl    跳过重建官方插件
 #   --skip-restart|-sr     跳过服务重启
 #   --skip-health|-sh      跳过健康检查
+#   --force|-f             无新提交时也强制执行更新
+#   --rollback [n]         回滚到前 n 个版本（默认 1，最多 2，来源为历史备份）
 #   --help|-h              显示此帮助
 #
 # 自更新：脚本自身在 git pull 后若发生变化，自动 exec 新版本（保留参数）。
@@ -27,6 +29,9 @@ SKIP_FRONTEND=0
 SKIP_PLUGINS=0
 SKIP_RESTART=0
 SKIP_HEALTH=0
+FORCE=0
+ROLLBACK=0
+ROLLBACK_N=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --skip-pull|-sp)     SKIP_PULL=1; shift ;;
@@ -35,6 +40,13 @@ while [ $# -gt 0 ]; do
         --skip-plugins|-spl) SKIP_PLUGINS=1; shift ;;
         --skip-restart|-sr)  SKIP_RESTART=1; shift ;;
         --skip-health|-sh)   SKIP_HEALTH=1; shift ;;
+        --force|-f)          FORCE=1; shift ;;
+        --rollback)
+            ROLLBACK=1; shift
+            # 可选回滚深度：--rollback [n]（默认 1，最多 2）
+            if [ $# -gt 0 ] && printf '%s' "$1" | grep -qE '^[0-9]+$'; then
+                ROLLBACK_N="$1"; shift
+            fi ;;
         --help|-h)
             sed -n '/^# 用法/,/^$/p' "$0" | sed 's/^# //;s/^#$//'
             exit 0 ;;
@@ -62,6 +74,98 @@ detect_pkg_manager
 [ -d "$REPO_DIR/.git" ] || error "未检测到 git 仓库，请先 git clone 本仓库"
 ok "部署目录: $DEPLOY_DIR    仓库: $REPO_DIR"
 
+BACKEND_PORT_NUM="8080"
+if grep -q "^PORT=" "$DEPLOY_DIR/portalt.env"; then
+    BACKEND_PORT_NUM="$(grep "^PORT=" "$DEPLOY_DIR/portalt.env" | cut -d= -f2 | sed 's/.*://')"
+fi
+PLUGINS_DIR="$DEPLOY_DIR/plugins"
+if grep -q '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env"; then
+    PLUGINS_DIR="$(grep '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env" | head -1 | cut -d= -f2-)"
+fi
+
+# ============================================================
+# 1.5 回滚模式（--rollback [n]）
+# ============================================================
+pick_backup() {
+    # 选出第 n 新的匹配备份（$1=备份前缀不含通配，$2=n）；无匹配时输出空串
+    ls -1dt "$1".* 2>/dev/null | sed -n "${2}p" || true
+}
+
+if [ "$ROLLBACK" = "1" ]; then
+    if [ "$ROLLBACK_N" -lt 1 ] || [ "$ROLLBACK_N" -gt 2 ]; then
+        error "回滚深度 n 需为 1 或 2（用法: --rollback [n]）"
+    fi
+    header "回滚到前 ${ROLLBACK_N} 个版本"
+
+    # ---- 后端二进制 ----
+    RB_BIN="$(pick_backup "$DEPLOY_DIR/portalt-server.bak" "$ROLLBACK_N")"
+    if [ -z "$RB_BIN" ]; then
+        error "没有可用的后端回滚备份（$DEPLOY_DIR/portalt-server.bak.* 数量不足）"
+    fi
+    if [ -f "$DEPLOY_DIR/portalt-server" ]; then
+        # 保存当前版本，可用 --rollback 1 撤销本次回滚
+        sudo cp "$DEPLOY_DIR/portalt-server" "$DEPLOY_DIR/portalt-server.bak.$(date +%Y%m%d%H%M%S)"
+        ok "已保存当前后端版本（可用 --rollback 1 撤销本次回滚）"
+    fi
+    sudo cp "$RB_BIN" "$DEPLOY_DIR/portalt-server"
+    sudo chmod 755 "$DEPLOY_DIR/portalt-server"
+    ok "后端二进制已回滚: $(basename "$RB_BIN")"
+    if [ "$SKIP_RESTART" = "0" ]; then
+        sudo systemctl restart portalt-backend || true
+    fi
+    if [ "$SKIP_HEALTH" = "0" ]; then
+        if wait_http "http://127.0.0.1:${BACKEND_PORT_NUM}/healthz"; then
+            ok "回滚后后端健康检查通过"
+        else
+            error "回滚后后端健康检查失败（查看: journalctl -u portalt-backend -n 50）"
+        fi
+    fi
+
+    # ---- 前端产物 ----
+    RB_OUT="$(pick_backup "$DEPLOY_DIR/frontend/.output.bak" "$ROLLBACK_N")"
+    if [ -n "$RB_OUT" ]; then
+        if [ -d "$DEPLOY_DIR/frontend/.output" ]; then
+            sudo cp -a "$DEPLOY_DIR/frontend/.output" "$DEPLOY_DIR/frontend/.output.bak.$(date +%Y%m%d%H%M%S)"
+        fi
+        sudo rm -rf "$DEPLOY_DIR/frontend/.output"
+        sudo cp -a "$RB_OUT" "$DEPLOY_DIR/frontend/.output"
+        ok "前端产物已回滚: $(basename "$RB_OUT")"
+        if [ "$SKIP_RESTART" = "0" ]; then
+            sudo systemctl restart portalt-frontend || true
+        fi
+        if [ "$SKIP_HEALTH" = "0" ]; then
+            if wait_http "http://127.0.0.1:$(grep -oP 'PORT=\K[0-9]+' /etc/systemd/system/portalt-frontend.service 2>/dev/null || echo 3001)/"; then
+                ok "回滚后前端健康检查通过"
+            else
+                error "回滚后前端健康检查失败"
+            fi
+        fi
+    else
+        warn "无前端回滚备份，跳过前端回滚"
+    fi
+
+    # ---- 插件目录 ----
+    RB_PLUGINS="$(pick_backup "$PLUGINS_DIR.bak" "$ROLLBACK_N")"
+    if [ -n "$RB_PLUGINS" ]; then
+        if [ -n "$(sudo ls -A "$PLUGINS_DIR" 2>/dev/null | head -1)" ]; then
+            sudo cp -a "$PLUGINS_DIR" "$PLUGINS_DIR.bak.$(date +%Y%m%d%H%M%S)"
+        fi
+        sudo rm -rf "$PLUGINS_DIR"
+        sudo cp -a "$RB_PLUGINS" "$PLUGINS_DIR"
+        ok "插件目录已回滚: $(basename "$RB_PLUGINS")"
+    else
+        warn "无插件回滚备份，跳过插件回滚"
+    fi
+
+    # 清理旧备份（各保留最近 2 份）
+    ls -1t "$DEPLOY_DIR"/portalt-server.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -f || true
+    ls -1dt "$DEPLOY_DIR"/frontend/.output.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
+    ls -1dt "$PLUGINS_DIR".bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
+
+    header "回滚完成"
+    exit 0
+fi
+
 # ============================================================
 # 2. 拉取最新代码（--skip-pull 跳过）
 # ============================================================
@@ -75,9 +179,9 @@ if [ "$SKIP_PULL" = "0" ]; then
     fi
     # 保存脚本自身哈希，用于自更新检测
     SCRIPT_HASH="$(md5sum "$0" 2>/dev/null | cut -d' ' -f1)"
+    PRE_HEAD="$(git -C "$REPO_DIR" rev-parse HEAD)"
     git -C "$REPO_DIR" pull --ff-only || error "git pull 失败（网络或冲突）"
-    CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
-    ok "已更新到: $CURRENT_HEAD"
+    POST_HEAD="$(git -C "$REPO_DIR" rev-parse HEAD)"
 
     # 自更新检测：脚本内容变化则用 bash 显式重新执行新版本。
     # 不用 exec "$0"：$0 可能是相对路径，且脚本未必有可执行权限；
@@ -87,6 +191,18 @@ if [ "$SKIP_PULL" = "0" ]; then
         info "更新脚本已更新，重新执行新版本 ..."
         exec bash "$SCRIPT_DIR/update.sh" --skip-pull "$@"
     fi
+
+    # 无新提交：非 --force 时不更新（迁移/构建/重启全部跳过）
+    if [ "$PRE_HEAD" = "$POST_HEAD" ]; then
+        if [ "$FORCE" = "1" ]; then
+            info "--force: 无新提交，仍强制执行更新"
+        else
+            ok "已是最新版本（无新提交），无需更新"
+            exit 0
+        fi
+    fi
+    CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
+    ok "已更新到: $CURRENT_HEAD"
 else
     # 跳过 pull 时从现有 HEAD 获取版本号
     CURRENT_HEAD="$(git -C "$REPO_DIR" log -1 --oneline)"
@@ -127,11 +243,6 @@ if [ -f /etc/caddy/Caddyfile ] && ! sudo diff -q "$REPO_DIR/caddy/Caddyfile" /et
         # 无 caddy 可执行文件：只落盘不 reload，依赖下次系统重启生效
         warn "caddy 命令不可用，Caddyfile 已更新但未 reload（下次重启生效）"
     fi
-fi
-
-BACKEND_PORT_NUM="8080"
-if grep -q "^PORT=" "$DEPLOY_DIR/portalt.env"; then
-    BACKEND_PORT_NUM="$(grep "^PORT=" "$DEPLOY_DIR/portalt.env" | cut -d= -f2 | sed 's/.*://')"
 fi
 
 # ============================================================
@@ -248,11 +359,6 @@ ls -1dt "$DEPLOY_DIR"/frontend/.output.bak.* 2>/dev/null | tail -n +3 | xargs -r
 # ============================================================
 # 4.5 插件目录（--skip-plugins 跳过重建，仅确保目录存在）
 # ============================================================
-PLUGINS_DIR="$DEPLOY_DIR/plugins"
-if grep -q '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env"; then
-    PLUGINS_DIR="$(grep '^PLUGINS_DIR=' "$DEPLOY_DIR/portalt.env" | head -1 | cut -d= -f2-)"
-fi
-
 if [ "$SKIP_PLUGINS" = "0" ]; then
     header "插件目录"
     sudo mkdir -p "$PLUGINS_DIR"
@@ -291,7 +397,7 @@ if [ "$BUILD_FAILED" = "1" ]; then
     fi
 fi
 # 清理旧插件备份（保留最近 2 份），无论构建成功与否均执行
-ls -1dt "$DEPLOY_DIR"/plugins.bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
+ls -1dt "$PLUGINS_DIR".bak.* 2>/dev/null | tail -n +3 | xargs -r sudo rm -rf || true
 
 if [ "$BUILD_FAILED" != "1" ]; then
     ok "插件目录就绪: $PLUGINS_DIR"
