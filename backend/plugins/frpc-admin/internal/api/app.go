@@ -12,14 +12,16 @@ import (
 	"net/http"
 	"os"
 	"path"
+	"path/filepath"
+	"strings"
 
 	"portalt-plugins/frpc-admin/internal/configstore"
 )
 
 // App 插件 HTTP 数据面处理器集合。
 type App struct {
-	store    configStore
-	staticFS http.Handler
+	store     configStore
+	staticDir string
 }
 
 // configStore 抽象，便于测试注入。
@@ -35,7 +37,7 @@ func NewApp(store configStore, staticDir string) *App {
 	a := &App{store: store}
 	if staticDir != "" {
 		if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
-			a.staticFS = http.FileServer(http.Dir(staticDir))
+			a.staticDir = staticDir
 		}
 	}
 	return a
@@ -57,7 +59,7 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/vms/{vmId}/config", a.handlePutConfig)
 
 	// 静态前端（仅非 /api 路径；插件进程只监听回环，且宿主静态反代拒绝 /api）
-	if a.staticFS != nil {
+	if a.staticDir != "" {
 		mux.HandleFunc("/", a.handleStatic)
 	} else {
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +73,9 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 }
 
 // handleStatic 提供插件静态前端；/ → index.html。
+// 不用 http.FileServer：Go 1.26 起 FileServer 对 /index.html 会 301 到 ./，
+// 在插件经宿主反代（/native/<id>/ 路径语义）挂载时形成重定向循环。
+// 改为显式打开文件返回，仅服务 static/ 内的真实文件。
 func (a *App) handleStatic(w http.ResponseWriter, r *http.Request) {
 	reqPath := r.URL.Path
 	if reqPath == "/" {
@@ -81,8 +86,40 @@ func (a *App) handleStatic(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	r.URL.Path = reqPath
-	a.staticFS.ServeHTTP(w, r)
+	f, err := os.Open(filepath.Join(a.staticDir, filepath.FromSlash(strings.TrimPrefix(reqPath, "/"))))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentTypeFor(reqPath))
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
+}
+
+// contentTypeFor 按扩展名推断 Content-Type（避免 ServeContent 依赖文件名推断时
+// 对 .js/.css 的 mime 表差异；纯 SPA 仅 html/js/css/svg）。
+func contentTypeFor(p string) string {
+	switch strings.ToLower(path.Ext(p)) {
+	case ".html":
+		return "text/html; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".svg":
+		return "image/svg+xml"
+	case ".json":
+		return "application/json"
+	case ".woff", ".woff2":
+		return "font/woff2"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (a *App) handleHealthz(w http.ResponseWriter, _ *http.Request) {

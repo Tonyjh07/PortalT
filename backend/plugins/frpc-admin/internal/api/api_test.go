@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,6 +17,30 @@ func TestHealthz(t *testing.T) {
 	resp := doReq(t, "GET", hs.URL+"/healthz", "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
 	assert.Contains(t, readBody(t, resp), "ok")
+}
+
+// TestStaticNoRedirect 验证静态前端 / 与 /index.html 直接返回 200，
+// 不产生 301（Go 1.26 FileServer 会对 /index.html 重定向 ./，形成循环）。
+func TestStaticNoRedirect(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("<html>hi</html>"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "assets"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "assets", "app.js"), []byte("console.log(1)"), 0o644))
+
+	store := mustStore(t, t.TempDir())
+	app := NewApp(store, dir)
+	mux := newMux(app)
+
+	for _, p := range []string{"/", "/index.html", "/assets/app.js"} {
+		resp := doReq(t, "GET", mux.URL+p, "")
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "路径 %s 应返回 200", p)
+	}
+
+	// 目录/不存在/穿越均应 404
+	for _, p := range []string{"/nope", "/assets", "/../secret"} {
+		resp := doReq(t, "GET", mux.URL+p, "")
+		assert.Equal(t, http.StatusNotFound, resp.StatusCode, "路径 %s 应返回 404", p)
+	}
 }
 
 func TestListConnectionsEmpty(t *testing.T) {
