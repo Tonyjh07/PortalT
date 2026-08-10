@@ -52,9 +52,15 @@ const methodBody = ref('')
 const methodResult = ref<{ status: number; body: string } | null>(null)
 const calling = ref(false)
 
-// 是否为门户内相对路径 iframe（由 Caddy 规则反代），需要平台接入状态判断可嵌入性
+// 是否为门户内相对路径 iframe（由 Caddy 规则反代，如 /esxi/ui/、/mcsmanager/）
 function isPortalIframe(p: MenuItem): boolean {
   return !!p.iframe_url && p.iframe_url.startsWith('/')
+}
+
+// 是否依赖平台接入状态（仅 esxi-admin：ESXi 未接入时显示占位提示而非嵌入；
+// 其余相对路径反代插件如 MCSManager 直接嵌入，不依赖平台判断）
+function isPlatformGated(p: MenuItem): boolean {
+  return p.id === 'esxi-admin'
 }
 
 async function sync() {
@@ -75,12 +81,14 @@ async function sync() {
     iframeFailed.value = false
     if (isPortalIframe(found)) {
       startKeepalive()
-      platform.value = null
-      platformErr.value = false
-      try {
-        platform.value = await api<PlatformInfo>('/platform')
-      } catch {
-        platformErr.value = true
+      if (isPlatformGated(found)) {
+        platform.value = null
+        platformErr.value = false
+        try {
+          platform.value = await api<PlatformInfo>('/platform')
+        } catch {
+          platformErr.value = true
+        }
       }
     }
   } else {
@@ -133,8 +141,9 @@ watch(selectedEndpoint, () => {
       <template v-if="plugin.type === 'access'">
         <!-- 区块一：iframe 嵌入 -->
         <template v-if="plugin.iframe_url">
-          <!-- 门户内相对路径（如 esxi-admin /esxi/ui/）：按平台接入状态渲染三态 -->
-          <div v-if="isPortalIframe(plugin)" class="access-embed">
+          <!-- 门户内相对路径（如 esxi-admin /esxi/ui/）：仅 esxi-admin 按平台接入状态
+               渲染三态；其余反代插件（如 MCSManager /mcsmanager/）直接嵌入 -->
+          <div v-if="isPortalIframe(plugin) && isPlatformGated(plugin)" class="access-embed">
             <template v-if="platform?.connected">
               <iframe
                 :src="plugin.iframe_url"
@@ -160,6 +169,23 @@ watch(selectedEndpoint, () => {
                 </template>
               </el-empty>
             </div>
+          </div>
+          <!-- 门户内相对路径且非平台依赖（MCSManager 等）：直接嵌入 -->
+          <div v-else-if="isPortalIframe(plugin)" class="access-embed">
+            <iframe
+              :src="plugin.iframe_url"
+              class="vm-iframe"
+              title="plugin"
+              @error="iframeFailed = true"
+            />
+            <el-alert
+              v-if="iframeFailed"
+              type="warning"
+              :closable="false"
+              show-icon
+              title="嵌入页面加载失败"
+              description="若页面空白，请确认 Caddy 已配置该插件的反代规则并已重载。"
+            />
           </div>
           <!-- 外部地址（http/https）：直接嵌入 -->
           <iframe v-else :src="plugin.iframe_url" class="vm-iframe" title="plugin" />
