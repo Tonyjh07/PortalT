@@ -52,7 +52,10 @@ func resolveConfigPath(ctx context.Context, conn *sshx.Conn, c configstore.Conne
 	return p.ConfigPath, nil
 }
 
-// resolveFormat 确定配置格式：请求显式值 > 连接配置 > 探测建议 > 默认 ini。
+// resolveFormat 确定配置格式：请求显式值 > 连接配置 > 自动检测（auto）。
+// 返回 "auto" 时由调用方（frc.Parse / frc.Detect）自动检测具体格式。
+// 注意：旧实现把未识别的值（如 "auto"）直接回退为 ini，导致 TOML 配置被 INI
+// 解析器错误解析（代理列表只剩最后一个 [[proxies]] 项）——已改为回退到自动检测。
 func resolveFormat(f string, hint string) string {
 	if frc.ValidateFormat(f) {
 		return f
@@ -60,7 +63,7 @@ func resolveFormat(f string, hint string) string {
 	if frc.ValidateFormat(hint) {
 		return hint
 	}
-	return string(frc.FormatINI)
+	return string(frc.FormatAuto)
 }
 
 // handleProbe POST /api/probe

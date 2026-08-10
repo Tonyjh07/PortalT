@@ -92,7 +92,13 @@ func (a *App) saveConfig(c configstore.Connection, req SaveConfigRequest) SaveCo
 	if req.Structured != nil {
 		cfg := req.Structured
 		if cfg.Format == "" || cfg.Format == frc.FormatAuto {
-			cfg.Format = frc.Format(resolveFormat(req.Format, c.Format))
+			// 请求未显式指定格式：优先取连接配置显式值，否则自动检测。
+			// Render 需要确定格式，auto 时按内容检测（无内容则默认 ini）。
+			format := resolveFormat(req.Format, c.Format)
+			if format == string(frc.FormatAuto) {
+				format = string(frc.Detect([]byte(req.Content)))
+			}
+			cfg.Format = frc.Format(format)
 		}
 		out, err := cfg.Render()
 		if err != nil {

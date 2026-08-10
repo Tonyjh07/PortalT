@@ -116,6 +116,57 @@ func TestGetConfig(t *testing.T) {
 	assert.Equal(t, 6000, out.Proxies[0].RemotePort)
 }
 
+// TestGetConfigTOMLAutoFormat 回归：连接格式为 auto 时读取 TOML 配置必须自动检测
+// 为 toml 并解析全部 [[proxies]]（旧实现把 auto 误回退为 ini，导致 TOML 被 INI
+// 解析器错误解析成单个 [proxies] 代理，见 config.go resolveFormat）。
+func TestGetConfigTOMLAutoFormat(t *testing.T) {
+	app, srv, hs := newTestApp(t)
+	conn, _ := app.store.Get()
+	conn.Format = "auto"
+	require.NoError(t, app.store.Save(conn))
+	srv.setFile("/etc/frp/frpc.ini", `serverAddr = "114.55.138.23"
+serverPort = 7000
+auth.token = "secret"
+
+[[proxies]]
+name = "rdp"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 3389
+remotePort = 13389
+
+[[proxies]]
+name = "minecraft"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 25565
+remotePort = 25565
+
+[[proxies]]
+name = "ssh"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 22
+remotePort = 12222
+`)
+
+	resp := doReq(t, "GET", hs.URL+"/api/config", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out ConfigResponse
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
+	assert.Equal(t, "toml", out.Format, "auto 应自动检测为 toml")
+	server, ok := out.Server.(map[string]any)
+	require.True(t, ok, "server 应为对象")
+	assert.Equal(t, "114.55.138.23", server["server_addr"])
+	assert.EqualValues(t, 7000, server["server_port"])
+	require.Len(t, out.Proxies, 3, "应解析出全部 3 个 [[proxies]]")
+	assert.Equal(t, "rdp", out.Proxies[0].Name)
+	assert.Equal(t, 13389, out.Proxies[0].RemotePort)
+	assert.Equal(t, "ssh", out.Proxies[2].Name)
+	assert.Equal(t, 12222, out.Proxies[2].RemotePort)
+	assert.NotEqual(t, "[proxies]", out.Proxies[0].Name, "不应出现 [proxies] 字面量作为代理名")
+}
+
 func TestGetConfigNoConnection(t *testing.T) {
 	dir := t.TempDir()
 	store := mustStore(t, dir)
@@ -235,4 +286,66 @@ func TestPutConfigNoContent(t *testing.T) {
 	_, _, hs := newTestApp(t)
 	resp := doReq(t, "PUT", hs.URL+"/api/config", `{}`)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
+}
+
+// TestGetConfigAutoFormatINI 回归：连接格式 auto + INI 内容必须仍按 INI 解析，
+// 防止 resolveFormat 改回 auto 后误伤旧 INI 配置。
+func TestGetConfigAutoFormatINI(t *testing.T) {
+	app, srv, hs := newTestApp(t)
+	conn, _ := app.store.Get()
+	conn.Format = "auto"
+	require.NoError(t, app.store.Save(conn))
+	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\nserver_port = 7000\n\n[ssh]\ntype = tcp\nlocal_port = 22\nremote_port = 6000\n")
+
+	resp := doReq(t, "GET", hs.URL+"/api/config", "")
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out ConfigResponse
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
+	assert.Equal(t, "ini", out.Format, "auto 应检测出 INI 格式")
+	require.Len(t, out.Proxies, 1)
+	assert.Equal(t, "ssh", out.Proxies[0].Name)
+	assert.Equal(t, 6000, out.Proxies[0].RemotePort)
+}
+
+// TestPutConfigRawAutoTOML 回归：raw 模式 + format=auto 保存 TOML 原文，
+// SyntaxCheck 内部 Detect 应识别为 toml（前端 raw 保存恒发 auto）。
+func TestPutConfigRawAutoTOML(t *testing.T) {
+	_, srv, hs := newTestApp(t)
+	srv.setFile("/etc/frp/frpc.ini", "serverAddr = \"1.2.3.4\"\nserverPort = 7000\n")
+
+	reqBody := `{"content":"serverAddr = \"9.9.9.9\"\nserverPort = 7000\n\nauth.token = \"tok\"\n\n[[proxies]]\nname = \"ssh\"\ntype = \"tcp\"\nlocalIP = \"127.0.0.1\"\nlocalPort = 22\nremotePort = 6000\n","format":"auto"}`
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out SaveConfigResponse
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
+	assert.True(t, out.SyntaxOK, "TOML 原文 + auto 应通过语法检查: %s", out.SyntaxError)
+	assert.True(t, out.Applied)
+	assert.False(t, out.RolledBack)
+
+	content, ok := srv.getFile("/etc/frp/frpc.ini")
+	require.True(t, ok)
+	assert.Contains(t, content, "serverAddr")
+	assert.Contains(t, content, "9.9.9.9")
+}
+
+// TestPutConfigStructuredAutoFormat 回归：结构化保存未显式指定格式 + 连接格式
+// auto 时，应回退为 ini（Detect 空原文默认 ini）而不触发 Render 的 auto 报错。
+func TestPutConfigStructuredAutoFormat(t *testing.T) {
+	app, srv, hs := newTestApp(t)
+	conn, _ := app.store.Get()
+	conn.Format = "auto"
+	require.NoError(t, app.store.Save(conn))
+	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\n")
+
+	reqBody := `{"structured":{"server":{"server_addr":"1.2.3.4","server_port":7000,"token":"tok"},"proxies":[{"name":"ssh","type":"tcp","local_ip":"127.0.0.1","local_port":22,"remote_port":6000}]}}`
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out SaveConfigResponse
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
+	assert.True(t, out.SyntaxOK, "结构化 + 未指定格式应能保存: %s", out.SyntaxError)
+	assert.True(t, out.Applied)
+
+	content, ok := srv.getFile("/etc/frp/frpc.ini")
+	require.True(t, ok)
+	assert.Contains(t, content, "server_addr = 1.2.3.4")
 }
