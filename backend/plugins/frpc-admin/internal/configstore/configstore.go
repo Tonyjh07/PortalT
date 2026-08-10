@@ -1,7 +1,8 @@
-// Package configstore 持久化各 VM 的 SSH 连接配置与 frpc 管理参数。
+// Package configstore 持久化目标主机的 SSH 连接配置与 frpc 管理参数。
 //
 // 存储：插件数据目录（data/connections.json），0600 权限，原子写（临时文件+rename）。
 // 凭据（密码/sudo 密码）落盘保存；返回给前端时需脱敏（密码只写不回）。
+// 单连接模型：插件管理一台目标主机，不依赖 PortalT 的 VM 概念（与主程序解耦）。
 package configstore
 
 import (
@@ -16,15 +17,13 @@ import (
 // ErrNotFound 目标连接配置不存在。
 var ErrNotFound = errors.New("连接配置不存在")
 
-// Connection 某台 VM 的 SSH 连接与 frpc 管理配置。
+// Connection 目标主机的 SSH 连接与 frpc 管理配置。
 type Connection struct {
-	VMID        string `json:"vm_id"`
-	VMName      string `json:"vm_name"` // 前端展示用（非权威，可刷新）
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	User        string `json:"user"`
-	Password    string `json:"password"`
-	SudoEnabled bool   `json:"sudo_enabled"` // 是否经 sudo 写文件/重启
+	Host         string `json:"host"`
+	Port         int    `json:"port"`
+	User         string `json:"user"`
+	Password     string `json:"password"`
+	SudoEnabled  bool   `json:"sudo_enabled"` // 是否经 sudo 写文件/重启
 	SudoPassword string `json:"sudo_password"`
 	// ConfigPath frpc 配置文件路径（缺省自动探测）。
 	ConfigPath string `json:"config_path"`
@@ -37,19 +36,16 @@ type Connection struct {
 	// 开启 → SudoPassword 非空用之，否则回退 Password。
 }
 
-// Store 连接配置存储。
+// Store 单连接配置存储。
 type Store struct {
 	mu   sync.Mutex
 	path string
-	data map[string]Connection // key = VMID
+	conn *Connection // nil = 未配置
 }
 
 // New 加载/初始化存储。dataDir 为插件数据目录。
 func New(dataDir string) (*Store, error) {
-	s := &Store{
-		path: filepath.Join(dataDir, "connections.json"),
-		data: map[string]Connection{},
-	}
+	s := &Store{path: filepath.Join(dataDir, "connections.json")}
 	if err := s.load(); err != nil {
 		return nil, err
 	}
@@ -66,68 +62,71 @@ func (s *Store) load() error {
 		}
 		return fmt.Errorf("读取连接配置失败: %w", err)
 	}
-	if len(bytesTrim(b)) == 0 {
+	if len(trimBytes(b)) == 0 {
 		return nil
 	}
-	if err := json.Unmarshal(b, &s.data); err != nil {
+	var c Connection
+	if err := json.Unmarshal(b, &c); err == nil && c.Host != "" {
+		// 新单连接格式（含 host 字段说明非 legacy map）
+		s.conn = &c
+		return nil
+	}
+	// 兼容旧版多连接格式（map[vm_id]Connection）：取任意一条
+	if migrated := migrateLegacy(b); migrated != nil {
+		s.conn = migrated
+		return nil
+	}
+	// 兜底：尝试单对象解析；空对象（删除后落盘 {}）视为未配置
+	if err := json.Unmarshal(b, &c); err != nil {
 		return fmt.Errorf("解析连接配置失败: %w", err)
 	}
-	if s.data == nil {
-		s.data = map[string]Connection{}
+	if c.Host != "" {
+		s.conn = &c
 	}
 	return nil
 }
 
-// Save 保存（或更新）某 VM 的连接配置。
+// Get 读取连接配置。
+func (s *Store) Get() (Connection, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.conn == nil {
+		return Connection{}, false
+	}
+	return *s.conn, true
+}
+
+// Save 保存（或更新）连接配置。
 func (s *Store) Save(c Connection) error {
 	if err := validate(c); err != nil {
 		return err
 	}
 	s.mu.Lock()
-	s.data[c.VMID] = c
-	err := s.persistLocked()
-	s.mu.Unlock()
-	return err
+	defer s.mu.Unlock()
+	s.conn = &c
+	return s.persistLocked()
 }
 
-// Get 读取某 VM 的连接配置。
-func (s *Store) Get(vmID string) (Connection, bool) {
+// Delete 删除连接配置。
+func (s *Store) Delete() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.data[vmID]
-	return c, ok
-}
-
-// List 返回全部连接配置（按 VMID 排序，便于前端稳定展示）。
-func (s *Store) List() []Connection {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([]Connection, 0, len(s.data))
-	ids := make([]string, 0, len(s.data))
-	for id := range s.data {
-		ids = append(ids, id)
-	}
-	sortStrings(ids)
-	for _, id := range ids {
-		out = append(out, s.data[id])
-	}
-	return out
-}
-
-// Delete 删除某 VM 的连接配置。
-func (s *Store) Delete(vmID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if _, ok := s.data[vmID]; !ok {
+	if s.conn == nil {
 		return ErrNotFound
 	}
-	delete(s.data, vmID)
+	s.conn = nil
 	return s.persistLocked()
 }
 
 // persistLocked 原子写盘（调用方需持有锁）。
 func (s *Store) persistLocked() error {
-	b, err := json.MarshalIndent(s.data, "", "  ")
+	var b []byte
+	var err error
+	if s.conn == nil {
+		b, err = json.MarshalIndent(map[string]any{}, "", "  ")
+	} else {
+		b, err = json.MarshalIndent(s.conn, "", "  ")
+	}
 	if err != nil {
 		return fmt.Errorf("序列化连接配置失败: %w", err)
 	}
@@ -143,9 +142,6 @@ func (s *Store) persistLocked() error {
 
 // validate 基础校验。
 func validate(c Connection) error {
-	if c.VMID == "" {
-		return errors.New("vm_id 不能为空")
-	}
 	if c.Host == "" {
 		return errors.New("SSH 主机不能为空")
 	}

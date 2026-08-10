@@ -10,8 +10,6 @@ import {
 
 const props = defineProps<{
   modelValue: boolean
-  vmId: string
-  vmName?: string
   existing?: Connection
 }>()
 
@@ -70,13 +68,13 @@ async function onProbe() {
     ElMessage.warning(err)
     return
   }
-  // 探测基于当前表单值：先保存为草稿再探测（密码为空时后端沿用旧值，不会清空）
+  // 先保存表单为草稿再探测（密码为空时后端沿用旧值，不会清空）
   probing.value = true
   probeResult.value = null
   try {
-    const conn = await saveConnection(props.vmId, { ...form, vm_id: props.vmId, vm_name: props.vmName })
+    const conn = await saveConnection({ ...form })
     emit('saved', conn)
-    const res = await probe(props.vmId)
+    const res = await probe()
     probeResult.value = res
     if (res.config_path && !form.config_path) form.config_path = res.config_path
     if (res.format_hint && res.format_hint !== '未知' && form.format === 'auto') {
@@ -98,7 +96,7 @@ async function onSave() {
   }
   saving.value = true
   try {
-    const conn = await saveConnection(props.vmId, { ...form, vm_id: props.vmId, vm_name: props.vmName })
+    const conn = await saveConnection({ ...form })
     emit('saved', conn)
     visible.value = false
   } catch (e) {
@@ -110,7 +108,7 @@ async function onSave() {
 </script>
 
 <template>
-  <el-dialog v-model="visible" :title="`主机信息 - ${vmName || vmId}`" width="640px" append-to-body>
+  <el-dialog v-model="visible" title="连接配置" width="640px" append-to-body>
     <el-form label-width="120px">
       <el-row :gutter="12">
         <el-col :span="12">

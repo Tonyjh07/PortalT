@@ -182,12 +182,14 @@ PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PL
 `backend/plugins/frpc-admin/` 为仓库内源码管理的 native 插件（独立 go.mod，非 submodule）：
 - **权限**：manifest 声明 `frpc-admin:manage`（已注册权限字典，默认仅 admin 持有），
   宿主 API 反代据此硬校验；插件侧不信任客户端身份头。
-- **能力**：通过 SSH 管理目标 VM 的 frpc 配置——SSH 连接配置持久化（密码脱敏）、
-  frp 版本/配置路径探测、frpc 配置结构化（INI/TOML 双格式）+ 原文双模式编辑，
+- **能力**：通过 SSH 管理目标主机的 frpc 配置（单连接模型，不依赖 PortalT 的 VM 列表）——
+  SSH 连接配置持久化（密码脱敏）、frp 版本/配置路径探测、frpc 配置结构化（INI/TOML 双格式）+ 原文双模式编辑，
   保存 = 备份 + 语法检查 + 应用 + 重启，失败自动回滚（回滚亦重启，命令用用户配置值）。
+- **API**：`GET/PUT/DELETE /api/connection`（连接配置，凭据脱敏）、`POST /api/probe`（探测）、
+  `GET/PUT /api/config`（读写 frpc 配置）——全部针对已保存的唯一连接，不再携带 vmId。
 - **sudo 语义**：连接配置 `sudo_enabled` 决定是否经 sudo 写文件/备份/回滚/重启；
   sudo 密码为空回退登录密码。
-- 部署：构建 `cmd/frpc-admin` + manifest.json + static/（前端待做）投放
+- 部署：构建 `cmd/frpc-admin` + manifest.json + static/（前端 SPA 已含）投放
   `PLUGINS_DIR/frpc-admin/`，启用后从 `/native/frpc-admin/` 访问。
 - 后端保存链路单测覆盖备份/回滚/重启失败等路径（`internal/api`，testify）。
 

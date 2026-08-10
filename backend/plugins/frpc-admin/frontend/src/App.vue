@@ -6,10 +6,8 @@ import {
   type Connection,
   type FrpcConfig,
   type SaveConfigResponse,
-  type VM,
   getConfig,
-  listConnections,
-  listVMs,
+  getConnection,
   saveConfig,
 } from './api'
 import HostInfoDialog from './components/HostInfoDialog.vue'
@@ -19,69 +17,55 @@ import ResultPanel from './components/ResultPanel.vue'
 
 type EditMode = 'visual' | 'raw'
 
-const vms = ref<VM[]>([])
-const vmLoading = ref(false)
-const selectedVM = ref<string>('')
-const connections = ref<Connection[]>([])
-const connByVm = computed(() => new Map(connections.value.map((c) => [c.vm_id, c])))
+// 单连接模型：插件管理一台目标主机，不依赖 PortalT 的 VM 列表（与主程序解耦）。
+const conn = ref<Connection | null>(null)
+const connLoaded = ref(false)
+const connLoading = ref(false)
+const hostInfoVisible = ref(false)
 
 const mode = ref<EditMode>('visual')
 const config = ref<ConfigResponse | null>(null)
 const configLoading = ref(false)
 const rawContent = ref('')
-const hostInfoVisible = ref(false)
 const saving = ref(false)
 const lastResult = ref<SaveConfigResponse | null>(null)
 const dirty = ref(false)
-const connected = computed(() => !!selectedVM.value && connByVm.value.has(selectedVM.value))
 
-async function loadVMs() {
-  vmLoading.value = true
+const connected = computed(() => !!conn.value)
+const connLabel = computed(() => {
+  const c = conn.value
+  if (!c) return ''
+  return `${c.user}@${c.host}:${c.port}`
+})
+
+async function loadConnection(quiet = false) {
+  connLoading.value = true
   try {
-    vms.value = await listVMs()
+    conn.value = await getConnection()
   } catch (e) {
-    ElMessage.error((e as Error).message)
+    const err = e as Error & { status?: number }
+    // 404 = 尚未配置连接（正常初装态）
+    if (err.status === 404) {
+      conn.value = null
+    } else {
+      conn.value = null
+      if (!quiet) ElMessage.error(err.message)
+    }
   } finally {
-    vmLoading.value = false
-  }
-}
-
-async function loadConnections() {
-  try {
-    connections.value = await listConnections()
-  } catch (e) {
-    ElMessage.error((e as Error).message)
+    connLoading.value = false
+    connLoaded.value = true
   }
 }
 
 let loadSeq = 0
 
-async function onVMChange(id: string) {
-  if (!id) return
-  if (dirty.value) {
-    try {
-      await ElMessageBox.confirm(
-        '当前 VM 有未保存的修改，切换后将丢失。确定切换吗？',
-        '切换 VM',
-        { confirmButtonText: '切换', cancelButtonText: '取消', type: 'warning' },
-      )
-    } catch {
-      return
-    }
-  }
-  dirty.value = false
-  config.value = null
-  rawContent.value = ''
-  lastResult.value = null
-  await loadConfig(id)
-}
-
-async function loadConfig(vmId: string) {
+async function loadConfig() {
+  if (!conn.value) return
   const seq = ++loadSeq
   configLoading.value = true
   try {
-    const res = await getConfig(vmId)
-    if (seq !== loadSeq) return // 已切换到其它 VM，丢弃过期响应
+    const res = await getConfig()
+    if (seq !== loadSeq) return // 连接已变化，丢弃过期响应
     config.value = res
     rawContent.value = res.content
   } catch (e) {
@@ -108,18 +92,17 @@ function openHostInfo() {
   hostInfoVisible.value = true
 }
 
-async function onHostInfoSaved(conn: Connection) {
-  connections.value = await listConnections()
-  ElMessage.success('主机信息已保存')
-  // 已有连接配置：刷新当前 VM 配置
-  if (selectedVM.value && connByVm.value.has(selectedVM.value)) {
-    await loadConfig(selectedVM.value)
-  }
+async function onHostInfoSaved(saved: Connection) {
+  conn.value = saved
+  ElMessage.success('连接配置已保存')
+  dirty.value = false
+  config.value = null
+  rawContent.value = ''
+  lastResult.value = null
+  await loadConfig()
 }
 
 async function onSave() {
-  const vmId = selectedVM.value
-  if (!vmId) return
   // 可视化模式需已成功解析出结构化配置（否则会用空模板覆盖远端）
   if (mode.value === 'visual' && !config.value) {
     ElMessage.warning('当前配置未成功解析，无法可视化保存；请切换到「配置文件编辑」修复后保存')
@@ -141,7 +124,7 @@ async function onSave() {
       mode.value === 'visual'
         ? { structured: buildStructured(), format: config.value?.format || 'auto' }
         : { content: rawContent.value, format: 'auto' }
-    const res = await saveConfig(vmId, req)
+    const res = await saveConfig(req)
     lastResult.value = res
     dirty.value = false
     if (res.syntax_ok && res.applied && !res.rolled_back) {
@@ -152,7 +135,7 @@ async function onSave() {
       ElMessage.error(res.error || res.syntax_error || '保存失败')
     }
     // 保存成功后刷新原文（回显服务端最终内容，含重新序列化结果）
-    if (res.syntax_ok) await loadConfig(vmId)
+    if (res.syntax_ok) await loadConfig()
   } catch (e) {
     ElMessage.error((e as Error).message)
   } finally {
@@ -190,12 +173,9 @@ async function onModeChange(next: EditMode) {
   mode.value = next
 }
 
-function fmtVmLabel(vm: VM): string {
-  return vm.ip_address ? `${vm.name}（${vm.ip_address}）` : vm.name
-}
-
 onMounted(async () => {
-  await Promise.all([loadVMs(), loadConnections()])
+  await loadConnection(true)
+  if (conn.value) await loadConfig()
 })
 </script>
 
@@ -208,27 +188,25 @@ onMounted(async () => {
         <span class="brand-sub">frpc 配置管理</span>
       </div>
       <div class="topbar-right">
-        <el-select
-          v-model="selectedVM"
-          placeholder="选择 VM"
-          :loading="vmLoading"
-          size="default"
-          class="vm-select"
-          filterable
-          @change="onVMChange"
-        >
-          <el-option v-for="vm in vms" :key="vm.id" :label="fmtVmLabel(vm)" :value="vm.id" />
-        </el-select>
+        <el-tag v-if="connected" type="success" size="default" effect="plain">{{ connLabel }}</el-tag>
         <el-button :icon="undefined" @click="openHostInfo">
-          <span class="btn-icon">⚙</span> 主机信息
+          <span class="btn-icon">⚙</span> 连接配置
         </el-button>
       </div>
     </header>
 
     <!-- 主体 -->
     <main class="body">
-      <template v-if="!selectedVM">
-        <el-empty description="请先在上方选择一个 VM 开始管理" />
+      <template v-if="!connLoaded">
+        <el-empty description="正在加载连接配置..." />
+      </template>
+
+      <template v-else-if="!connected">
+        <el-empty description="尚未配置 SSH 连接，请先点击「连接配置」设置目标主机">
+          <template #default>
+            <el-button type="primary" @click="openHostInfo">去配置连接</el-button>
+          </template>
+        </el-empty>
       </template>
 
       <template v-else>
@@ -239,11 +217,8 @@ onMounted(async () => {
             <el-radio-button value="raw">配置文件编辑</el-radio-button>
           </el-radio-group>
           <div class="action-right">
-            <el-tag v-if="!connected" type="warning" size="default" effect="plain">
-              未配置连接，请先打开「主机信息」
-            </el-tag>
-            <el-tag v-else-if="dirty" type="primary" size="default" effect="plain">有未保存修改</el-tag>
-            <el-button type="primary" :loading="saving" :disabled="!connected" @click="onSave">
+            <el-tag v-if="dirty" type="primary" size="default" effect="plain">有未保存修改</el-tag>
+            <el-button type="primary" :loading="saving" @click="onSave">
               保存并重启
             </el-button>
           </div>
@@ -254,14 +229,14 @@ onMounted(async () => {
           <VisualEditor
             v-if="mode === 'visual'"
             v-model:config="config"
-            :disabled="!connected || configLoading"
+            :disabled="configLoading"
             @dirty="onDirty"
           />
           <RawEditor
             v-else
             v-model:content="rawContent"
             :format="config?.format || 'auto'"
-            :disabled="!connected || configLoading"
+            :disabled="configLoading"
             @dirty="onDirty"
           />
         </div>
@@ -271,12 +246,10 @@ onMounted(async () => {
       </template>
     </main>
 
-    <!-- 主机信息弹窗 -->
+    <!-- 连接配置弹窗 -->
     <HostInfoDialog
       v-model="hostInfoVisible"
-      :vm-id="selectedVM"
-      :vm-name="vms.find((v) => v.id === selectedVM)?.name"
-      :existing="selectedVM ? connByVm.get(selectedVM) : undefined"
+      :existing="conn || undefined"
       @saved="onHostInfoSaved"
     />
   </div>
@@ -324,10 +297,6 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 10px;
-}
-
-.vm-select {
-  width: 240px;
 }
 
 .btn-icon {

@@ -39,13 +39,14 @@ type SaveConfigResponse struct {
 	Error         string `json:"error,omitempty"` // 前置失败（SSH/读取等）时非空
 }
 
-// handlePutConfig PUT /api/vms/{vmId}/config
+// handlePutConfig PUT /api/config
 // 保存 frpc 配置：语法检查 → 备份 → 写入 → 重启 → 失败回滚。
 // 全程返回 200 + SaveConfigResponse（应用结果），前置硬失败（无连接配置）返回 4xx。
+// 针对已保存连接配置。
 func (a *App) handlePutConfig(w http.ResponseWriter, r *http.Request) {
-	c, ok := a.store.Get(vmID(r))
+	c, ok := a.store.Get()
 	if !ok {
-		writeErr(w, http.StatusNotFound, "该 VM 尚未配置 SSH 连接，请先在「主机信息」中配置")
+		writeErr(w, http.StatusNotFound, "尚未配置 SSH 连接")
 		return
 	}
 	var req SaveConfigRequest

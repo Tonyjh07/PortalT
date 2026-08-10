@@ -43,44 +43,49 @@ func TestStaticNoRedirect(t *testing.T) {
 	}
 }
 
-func TestListConnectionsEmpty(t *testing.T) {
+func TestGetConnectionEmpty(t *testing.T) {
 	dir := t.TempDir()
 	store := mustStore(t, dir)
 	app := NewApp(store, "")
 	mux := newMux(app)
-	resp := doReq(t, "GET", mux.URL+"/api/connections", "")
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	assert.Contains(t, readBody(t, resp), "[]")
+	resp := doReq(t, "GET", mux.URL+"/api/connection", "")
+	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
-func TestSaveAndListConnections(t *testing.T) {
+func TestSaveAndGetConnection(t *testing.T) {
 	_, _, hs := newTestApp(t)
 	body := `{"host":"10.0.0.10","port":22,"user":"root","password":"pw","sudo_enabled":true,"config_path":"/etc/frp/frpc.ini","format":"ini"}`
-	resp := doReq(t, "PUT", hs.URL+"/api/connections/vm-2", body)
+	resp := doReq(t, "PUT", hs.URL+"/api/connection", body)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	out := readBody(t, resp)
 	assert.NotContains(t, out, "pw", "密码应脱敏")
 
-	resp = doReq(t, "GET", hs.URL+"/api/connections", "")
+	resp = doReq(t, "GET", hs.URL+"/api/connection", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
-	var list []map[string]any
-	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &list))
-	require.Len(t, list, 2)
+	var conn struct {
+		Host       string `json:"host"`
+		Password   string `json:"password"`
+		ConfigPath string `json:"config_path"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &conn))
+	assert.Equal(t, "10.0.0.10", conn.Host)
+	assert.Equal(t, "", conn.Password, "GET 不应回显密码")
+	assert.Equal(t, "/etc/frp/frpc.ini", conn.ConfigPath)
 }
 
 func TestSaveConnectionKeepsPasswordOnEmpty(t *testing.T) {
 	app, _, hs := newTestApp(t)
 	body := `{"host":"10.0.0.10","port":22,"user":"root","password":"secret","sudo_password":"sudosec"}`
-	resp := doReq(t, "PUT", hs.URL+"/api/connections/vm-keep", body)
+	resp := doReq(t, "PUT", hs.URL+"/api/connection", body)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// 第二次保存不携带密码（前端不回显），应沿用旧值
 	body = `{"host":"10.0.0.10","port":2222,"user":"root"}`
-	resp = doReq(t, "PUT", hs.URL+"/api/connections/vm-keep", body)
+	resp = doReq(t, "PUT", hs.URL+"/api/connection", body)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	// 直接读存储层确认密码仍在（API 层脱敏不可见）
-	got, ok := app.store.Get("vm-keep")
+	got, ok := app.store.Get()
 	require.True(t, ok)
 	assert.Equal(t, "secret", got.Password, "空密码保存应沿用旧值")
 	assert.Equal(t, "sudosec", got.SudoPassword, "空 sudo 密码保存应沿用旧值")
@@ -89,9 +94,9 @@ func TestSaveConnectionKeepsPasswordOnEmpty(t *testing.T) {
 
 func TestDeleteConnection(t *testing.T) {
 	_, _, hs := newTestApp(t)
-	resp := doReq(t, "DELETE", hs.URL+"/api/connections/vm-1", "")
+	resp := doReq(t, "DELETE", hs.URL+"/api/connection", "")
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
-	resp = doReq(t, "DELETE", hs.URL+"/api/connections/vm-1", "")
+	resp = doReq(t, "DELETE", hs.URL+"/api/connection", "")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -99,7 +104,7 @@ func TestGetConfig(t *testing.T) {
 	_, srv, hs := newTestApp(t)
 	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\nserver_port = 7000\n\n[ssh]\ntype = tcp\nlocal_port = 22\nremote_port = 6000\n")
 
-	resp := doReq(t, "GET", hs.URL+"/api/vms/vm-1/config", "")
+	resp := doReq(t, "GET", hs.URL+"/api/config", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out ConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -112,22 +117,25 @@ func TestGetConfig(t *testing.T) {
 }
 
 func TestGetConfigNoConnection(t *testing.T) {
-	_, _, hs := newTestApp(t)
-	resp := doReq(t, "GET", hs.URL+"/api/vms/vm-nope/config", "")
+	dir := t.TempDir()
+	store := mustStore(t, dir)
+	app := NewApp(store, "")
+	mux := newMux(app)
+	resp := doReq(t, "GET", mux.URL+"/api/config", "")
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
 func TestGetConfigParseError(t *testing.T) {
 	_, srv, hs := newTestApp(t)
 	srv.setFile("/etc/frp/frpc.ini", "[common\nserver_addr = 1.2.3.4")
-	resp := doReq(t, "GET", hs.URL+"/api/vms/vm-1/config", "")
+	resp := doReq(t, "GET", hs.URL+"/api/config", "")
 	assert.Equal(t, http.StatusUnprocessableEntity, resp.StatusCode)
 	assert.Contains(t, readBody(t, resp), "content")
 }
 
 func TestProbe(t *testing.T) {
 	_, _, hs := newTestApp(t)
-	resp := doReq(t, "GET", hs.URL+"/api/vms/vm-1/probe", "")
+	resp := doReq(t, "POST", hs.URL+"/api/probe", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var p struct {
 		Version    string `json:"version"`
@@ -144,7 +152,7 @@ func TestPutConfigRawSuccess(t *testing.T) {
 	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\nserver_port = 7000\n")
 
 	reqBody := `{"content":"[common]\nserver_addr = 9.9.9.9\nserver_port = 7000\n\n[ssh]\ntype = tcp\nlocal_port = 22\nremote_port = 6000\n","format":"ini"}`
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", reqBody)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out SaveConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -164,7 +172,7 @@ func TestPutConfigStructuredSuccess(t *testing.T) {
 	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\n")
 
 	reqBody := `{"structured":{"format":"ini","server":{"server_addr":"1.2.3.4","server_port":7000,"token":"tok"},"proxies":[{"name":"ssh","type":"tcp","local_ip":"127.0.0.1","local_port":22,"remote_port":6000}]}}`
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", reqBody)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out SaveConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -181,7 +189,7 @@ func TestPutConfigSyntaxErrorNoWrite(t *testing.T) {
 	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\n")
 
 	before, _ := srv.getFile("/etc/frp/frpc.ini")
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", `{"content":"serverAddr = [broken","format":"toml"}`)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", `{"content":"serverAddr = [broken","format":"toml"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out SaveConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -199,7 +207,7 @@ func TestPutConfigRestartFailRollback(t *testing.T) {
 	srv.failRestart = true
 
 	reqBody := `{"content":"[common]\nserver_addr = 9.9.9.9\nserver_port = 7000\n","format":"ini"}`
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", reqBody)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out SaveConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -216,7 +224,7 @@ func TestPutConfigWriteFailRollback(t *testing.T) {
 	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\n")
 	srv.failWrite = true
 
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", `{"content":"[common]\nserver_addr = 9.9.9.9\n","format":"ini"}`)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", `{"content":"[common]\nserver_addr = 9.9.9.9\n","format":"ini"}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	var out SaveConfigResponse
 	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
@@ -225,6 +233,6 @@ func TestPutConfigWriteFailRollback(t *testing.T) {
 
 func TestPutConfigNoContent(t *testing.T) {
 	_, _, hs := newTestApp(t)
-	resp := doReq(t, "PUT", hs.URL+"/api/vms/vm-1/config", `{}`)
+	resp := doReq(t, "PUT", hs.URL+"/api/config", `{}`)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }

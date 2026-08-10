@@ -216,14 +216,12 @@ func newTestApp(t *testing.T) (*App, *testSSHServer, *httptest.Server) {
 	store, err := configstore.New(dir)
 	require.NoError(t, err)
 	conn := configstore.Connection{
-		VMID:    "vm-1",
-		VMName:  "测试机",
-		Host:    "127.0.0.1",
-		Port:    portInt,
-		User:    "root",
-		Password: "secret",
+		Host:       "127.0.0.1",
+		Port:       portInt,
+		User:       "root",
+		Password:   "secret",
 		ConfigPath: "/etc/frp/frpc.ini",
-		Format:  "ini",
+		Format:     "ini",
 	}
 	require.NoError(t, store.Save(conn))
 

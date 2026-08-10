@@ -34,7 +34,11 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
       : (errBody as { error?: string })?.error
         ?? (errBody as { message?: string })?.message
         ?? `请求失败（HTTP ${res.status}）`
-    const err = new Error(msg) as Error & { detail?: { content?: string; format?: string; path?: string } }
+    const err = new Error(msg) as Error & {
+      detail?: { content?: string; format?: string; path?: string }
+      status?: number
+    }
+    err.status = res.status
     if (typeof errBody === 'object' && errBody && 'content' in errBody) {
       err.detail = { content: errBody.content, format: errBody.format, path: errBody.path }
     }
@@ -49,16 +53,7 @@ export async function request<T>(url: string, init: RequestInit = {}): Promise<T
 
 // ---- 类型定义（与插件 API 契约对应） ----
 
-export interface VM {
-  id: string
-  name: string
-  status?: string
-  ip_address?: string
-}
-
 export interface Connection {
-  vm_id: string
-  vm_name?: string
   host: string
   port: number
   user: string
@@ -126,32 +121,29 @@ export interface SaveConfigResponse {
 }
 
 // ---- API 封装 ----
+// 单连接模型：插件管理一台目标主机，不依赖 PortalT 的 VM 列表（与主程序解耦）。
 
-export function listVMs(): Promise<VM[]> {
-  return request<VM[]>('/api/v1/vms')
+export function getConnection(): Promise<Connection> {
+  return request<Connection>(`${PLUGIN_API}/connection`)
 }
 
-export function listConnections(): Promise<Connection[]> {
-  return request<Connection[]>(`${PLUGIN_API}/connections`)
-}
-
-export function saveConnection(vmId: string, conn: Partial<Connection>): Promise<Connection> {
-  return request<Connection>(`${PLUGIN_API}/connections/${encodeURIComponent(vmId)}`, {
+export function saveConnection(conn: Partial<Connection>): Promise<Connection> {
+  return request<Connection>(`${PLUGIN_API}/connection`, {
     method: 'PUT',
     body: JSON.stringify(conn),
   })
 }
 
-export function probe(vmId: string): Promise<ProbeResult> {
-  return request<ProbeResult>(`${PLUGIN_API}/vms/${encodeURIComponent(vmId)}/probe`)
+export function probe(): Promise<ProbeResult> {
+  return request<ProbeResult>(`${PLUGIN_API}/probe`, { method: 'POST' })
 }
 
-export function getConfig(vmId: string): Promise<ConfigResponse> {
-  return request<ConfigResponse>(`${PLUGIN_API}/vms/${encodeURIComponent(vmId)}/config`)
+export function getConfig(): Promise<ConfigResponse> {
+  return request<ConfigResponse>(`${PLUGIN_API}/config`)
 }
 
-export function saveConfig(vmId: string, req: SaveConfigRequest): Promise<SaveConfigResponse> {
-  return request<SaveConfigResponse>(`${PLUGIN_API}/vms/${encodeURIComponent(vmId)}/config`, {
+export function saveConfig(req: SaveConfigRequest): Promise<SaveConfigResponse> {
+  return request<SaveConfigResponse>(`${PLUGIN_API}/config`, {
     method: 'PUT',
     body: JSON.stringify(req),
   })

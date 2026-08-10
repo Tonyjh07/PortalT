@@ -63,12 +63,13 @@ func resolveFormat(f string, hint string) string {
 	return string(frc.FormatINI)
 }
 
-// handleProbe GET /api/vms/{vmId}/probe
+// handleProbe POST /api/probe
 // SSH 探测 frp 版本与配置路径（"怎么看配置路径/格式"的自动化）。
+// 针对已保存连接配置。
 func (a *App) handleProbe(w http.ResponseWriter, r *http.Request) {
-	c, ok := a.store.Get(vmID(r))
+	c, ok := a.store.Get()
 	if !ok {
-		writeErr(w, http.StatusNotFound, "该 VM 尚未配置 SSH 连接，请先在「主机信息」中配置")
+		writeErr(w, http.StatusNotFound, "尚未配置 SSH 连接")
 		return
 	}
 	conn, err := dialFor(c)
@@ -97,12 +98,12 @@ type ConfigResponse struct {
 	Path    string       `json:"path"`
 }
 
-// handleGetConfig GET /api/vms/{vmId}/config
+// handleGetConfig GET /api/config
 // SSH 读取 frpc 配置并解析为结构化数据（可视化编辑 + 原文编辑共用）。
 func (a *App) handleGetConfig(w http.ResponseWriter, r *http.Request) {
-	c, ok := a.store.Get(vmID(r))
+	c, ok := a.store.Get()
 	if !ok {
-		writeErr(w, http.StatusNotFound, "该 VM 尚未配置 SSH 连接，请先在「主机信息」中配置")
+		writeErr(w, http.StatusNotFound, "尚未配置 SSH 连接")
 		return
 	}
 	conn, err := dialFor(c)

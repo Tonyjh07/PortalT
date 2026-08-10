@@ -8,5 +8,5 @@
   "permission": "frpc-admin:manage",
   "health_interval_seconds": 10,
   "version": "1.0.0",
-  "description": "通过 SSH 调整指定 VM 内的 frpc 配置：结构化/文本双模式编辑，保存时备份、语法检查、应用并重启，失败自动回滚"
+  "description": "通过 SSH 管理目标主机的 frpc 配置：结构化/文本双模式编辑，保存时备份、语法检查、应用并重启，失败自动回滚"
 }
