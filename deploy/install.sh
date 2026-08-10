@@ -309,6 +309,14 @@ for pdir in "$REPO_DIR"/backend/plugins/*/; do
         else
             warn "官方插件 $id 构建失败（跳过，可在更新时重试）"
         fi
+        # 宿主按 manifest 扫描插件；不同步 manifest.json 会导致插件不可见
+        if [ -f "$pdir/manifest.json" ]; then
+            sudo cp "$pdir/manifest.json" "$DEPLOY_DIR/plugins/$id/manifest.json"
+        fi
+        # 可选静态前端产物
+        if [ -d "$pdir/static" ] && [ -n "$(ls -A "$pdir/static" 2>/dev/null)" ]; then
+            sudo cp -a "$pdir/static/." "$DEPLOY_DIR/plugins/$id/static/"
+        fi
     fi
 done
 
