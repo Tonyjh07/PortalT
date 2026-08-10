@@ -379,8 +379,13 @@ for pdir in "$REPO_DIR"/backend/plugins/*/; do
     if [ -f "$pdir/manifest.json" ] && command -v go >/dev/null 2>&1; then
         info "重建官方插件 $id ..."
         sudo mkdir -p "$PLUGINS_DIR/$id"
-        if ! (cd "$pdir" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o "$PLUGINS_DIR/$id/plugin" ./cmd); then
-            warn "官方插件 $id 构建失败"
+        # 入口包约定：cmd/<id>/（见 backend/plugins/README.md）；缺省回退 ./cmd
+        PKG="./cmd"
+        if [ -f "$pdir/cmd/$id/main.go" ]; then
+            PKG="./cmd/$id"
+        fi
+        if ! (cd "$pdir" && CGO_ENABLED=0 GOPROXY=https://goproxy.cn,direct go build -o "$PLUGINS_DIR/$id/plugin" "$PKG"); then
+            warn "官方插件 $id 构建失败（入口包 $PKG）"
             BUILD_FAILED=1
         fi
         # 宿主按 manifest 扫描插件；不同步 manifest.json 会导致插件不可见
