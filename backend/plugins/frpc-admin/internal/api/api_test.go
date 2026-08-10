@@ -42,6 +42,25 @@ func TestSaveAndListConnections(t *testing.T) {
 	require.Len(t, list, 2)
 }
 
+func TestSaveConnectionKeepsPasswordOnEmpty(t *testing.T) {
+	app, _, hs := newTestApp(t)
+	body := `{"host":"10.0.0.10","port":22,"user":"root","password":"secret","sudo_password":"sudosec"}`
+	resp := doReq(t, "PUT", hs.URL+"/api/connections/vm-keep", body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// 第二次保存不携带密码（前端不回显），应沿用旧值
+	body = `{"host":"10.0.0.10","port":2222,"user":"root"}`
+	resp = doReq(t, "PUT", hs.URL+"/api/connections/vm-keep", body)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// 直接读存储层确认密码仍在（API 层脱敏不可见）
+	got, ok := app.store.Get("vm-keep")
+	require.True(t, ok)
+	assert.Equal(t, "secret", got.Password, "空密码保存应沿用旧值")
+	assert.Equal(t, "sudosec", got.SudoPassword, "空 sudo 密码保存应沿用旧值")
+	assert.Equal(t, 2222, got.Port, "非凭据字段应更新")
+}
+
 func TestDeleteConnection(t *testing.T) {
 	_, _, hs := newTestApp(t)
 	resp := doReq(t, "DELETE", hs.URL+"/api/connections/vm-1", "")

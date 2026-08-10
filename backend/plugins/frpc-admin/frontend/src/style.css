@@ -1,0 +1,21 @@
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  background-color: var(--el-bg-color-page);
+}
+
+/* 覆盖 Element Plus 暗色变量的页面底色，与门户一致 */
+html.dark {
+  --portalt-bg: #0f1419;
+}
+
+#app {
+  background-color: var(--portalt-bg, var(--el-bg-color-page));
+}

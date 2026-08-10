@@ -23,6 +23,8 @@ func (a *App) handleListConnections(w http.ResponseWriter, _ *http.Request) {
 
 // handleSaveConnection PUT /api/connections/{vmId}
 // 保存/更新某 VM 的 SSH 连接与 frpc 管理配置。
+// 凭据策略（密码只写不回）：password / sudo_password 为空时沿用已存旧值，
+// 允许前端在密码不回显的前提下做部分更新（如仅改路径/端口）。
 func (a *App) handleSaveConnection(w http.ResponseWriter, r *http.Request) {
 	id := vmID(r)
 	var body configstore.Connection
@@ -31,6 +33,15 @@ func (a *App) handleSaveConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.VMID = id
+	// 凭据沿用旧值：新装场景（旧值不存在）则原样保存（空密码后续 SSH 会失败并报错）。
+	if old, ok := a.store.Get(id); ok {
+		if body.Password == "" {
+			body.Password = old.Password
+		}
+		if body.SudoPassword == "" {
+			body.SudoPassword = old.SudoPassword
+		}
+	}
 	if err := a.store.Save(body); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
