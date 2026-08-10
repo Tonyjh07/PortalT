@@ -27,6 +27,7 @@ var rolePermissions = map[Role]map[string]struct{}{
 		PERM_PLUGIN_MANAGE:  {},
 		PERM_USER_MANAGE:    {},
 		PERM_ESXI_ADMIN_USE: {},
+		PERM_FRPC_ADMIN_MANAGE: {},
 	},
 	RoleUser: {
 		PERM_VIEW_ALL:    {},

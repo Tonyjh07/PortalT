@@ -29,4 +29,8 @@ const (
 	// plugin:view（/menu），默认 admin 双持有，自定义角色
 	// 最小授权时建议同时授予 plugin:view。
 	PERM_ESXI_ADMIN_USE = "esxi-admin:use"
+	// PERM_FRPC_ADMIN_MANAGE 管理 frpc 配置（frpc-admin 插件：配置 SSH 连接、
+	// 读写 frpc 配置、保存并重启）。默认仅 admin 持有；自定义角色如需使用
+	// 该插件须同时授予 plugin:view。
+	PERM_FRPC_ADMIN_MANAGE = "frpc-admin:manage"
 )

@@ -203,7 +203,7 @@ PUT    /api/v1/users/:id/vm-access  → 全量替换用户授权（{vm_ids:[...]
 
 ```
 GET    /api/v1/roles           → 全部角色（内置 admin/user/viewer + 自定义）
-GET    /api/v1/roles/permissions → 权限字典（11 项，中文描述）
+GET    /api/v1/roles/permissions → 权限字典（12 项，中文描述）
 POST   /api/v1/roles           → 创建自定义角色（id/name 必填；id 仅小写字母/数字/下划线/连字符 1-32 位）
 PUT    /api/v1/roles/:id       → 更新角色权限集合（内置角色可改）
 DELETE /api/v1/roles/:id       → 删除角色（内置角色不可删）
@@ -509,6 +509,7 @@ type PluginRepository interface {
 | PERM_PLUGIN_MANAGE | plugin:manage | 管理插件 |
 | PERM_USER_MANAGE | user:manage | 管理用户 |
 | PERM_ESXI_ADMIN_USE | esxi-admin:use | 访问 ESXi 管理界面（esxi-admin 插件专属） |
+| PERM_FRPC_ADMIN_MANAGE | frpc-admin:manage | 管理 frpc 配置（frpc-admin 插件专属） |
 
 ### 角色权限矩阵
 
@@ -523,6 +524,7 @@ type PluginRepository interface {
 | vm:console | ✅ | ✅ | ❌ |
 | plugin:view | ✅ | ✅ | ❌ |
 | esxi-admin:use | ✅ | ❌ | ❌ |
+| frpc-admin:manage | ✅ | ❌ | ❌ |
 | vm:manage / plugin:manage / user:manage | ✅ | ❌ | ❌ |
 
 自定义角色：任意权限子集；插件声明的权限在 API 层强制校验（access 代理经 `Plugin.CanAccess`，native 由插件宿主校验）。

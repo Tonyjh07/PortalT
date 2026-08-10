@@ -71,6 +71,7 @@ var permissionDescriptions = map[string]string{
 	PERM_PLUGIN_MANAGE:  "管理插件（增删改与启用停用）",
 	PERM_USER_MANAGE:    "管理用户与角色权限",
 	PERM_ESXI_ADMIN_USE: "访问 ESXi 管理界面（esxi-admin 插件）",
+	PERM_FRPC_ADMIN_MANAGE: "管理 frpc 配置（frpc-admin 插件）",
 }
 
 // AllPermissions 返回系统全部可用权限字典，按 ID 排序（确定性输出）。

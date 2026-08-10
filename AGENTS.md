@@ -46,4 +46,5 @@ PortalT：HomeLab 统一门户（Go 后端 + Nuxt 3 前端）。详见 `About.md
 - 代码注释、错误消息、commit 均为中文；commit 用 Conventional Commits 风格（如 `fix(frontend): ...`、`Phase N: ...`），直接在 main 分支工作，提交须用户明确要求。
 - 文档约定（`docs/README.md`）：只记录已实现内容，Phase 完成或接口变更必须同步更新文档与索引表；`About.md` 进度表同步打勾。
 - 测试用 testify（assert/require）；后端 `go test ./... -count=1` 全绿是提交/交付的前提。
-- **提交/交付前必须调用 subagent 审查代码**：先用 `general` subagent 对未提交改动做静态 review（安全问题、正确性、与仓库约定一致性），无阻断问题方可提交；阻断/重要建议先修复再提交。
+- **提交/交付前必须调用 subagent 审查代码**：先用 `general` subagent 对未提交改动做静态 review（安全问题、正确性、与仓库约定一致性）。审查若发现**阻断问题**，修改后须重新做一次快速审查（确认修复无误）再提交；若**无阻断问题**，按重要建议修改后可直接提交。
+- **修改本文件（AGENTS.md）会立即生效到后续会话的系统提示词**：写入后若感觉"AGENTS.md 里已经有对应内容"属正常现象（本会话的提示词已含旧版全文，编辑时注意以磁盘实际内容为准）。

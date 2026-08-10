@@ -31,6 +31,8 @@ func TestUser_HasPermission(t *testing.T) {
 		{"访客可查看VM", testUser(RoleViewer), PERM_VM_VIEW, true},
 		{"访客不可启动VM", testUser(RoleViewer), PERM_VM_START, false},
 		{"访客不可管理插件", testUser(RoleViewer), PERM_PLUGIN_MANAGE, false},
+		{"管理员可管理frpc配置", testUser(RoleAdmin), PERM_FRPC_ADMIN_MANAGE, true},
+		{"普通用户不可管理frpc配置", testUser(RoleUser), PERM_FRPC_ADMIN_MANAGE, false},
 		{"未知角色无权限", testUser("ghost"), PERM_VM_VIEW, false},
 	}
 	for _, tt := range tests {
@@ -65,6 +67,7 @@ func TestUser_HasPermission_CoversAllDefinedPerms(t *testing.T) {
 		PERM_VIEW_ALL, PERM_VM_VIEW, PERM_VM_START, PERM_VM_STOP,
 		PERM_VM_RESTART, PERM_VM_MANAGE, PERM_PLUGIN_VIEW,
 		PERM_PLUGIN_MANAGE, PERM_USER_MANAGE,
+		PERM_ESXI_ADMIN_USE, PERM_FRPC_ADMIN_MANAGE,
 	}
 	admin := testUser(RoleAdmin)
 	for _, perm := range allPerms {
