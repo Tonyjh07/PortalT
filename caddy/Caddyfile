@@ -49,7 +49,7 @@
 # }
 
 # 可选：域名与 HTTPS（自动 TLS），启用后 443/80 入口。
-# demo.tonyjh07.dpdns.org {
+# example.com {
 # 	tls {
 # 		dns cloudflare {env.CF_API_TOKEN}
 # 	}

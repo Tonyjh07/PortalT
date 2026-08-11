@@ -432,6 +432,9 @@ if [ "$USE_CADDY" = "1" ]; then
     [ -f "$REPO_DIR/caddy/Caddyfile" ] || error "仓库缺少 caddy/Caddyfile"
     sudo mkdir -p /etc/caddy
     sudo cp "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
+    # 记录部署的仓库版哈希，供 update.sh 判断线上文件是否被本地修改
+    printf '%s\n' "$(sha256sum "$REPO_DIR/caddy/Caddyfile" | awk '{print $1}')" \
+        | sudo tee /etc/caddy/.portalt-caddyfile.sha >/dev/null
     # access 插件 Caddy 规则目录（Caddyfile 已 import plugins.d/*.caddy）
     sudo mkdir -p /etc/caddy/plugins.d
 

@@ -213,34 +213,78 @@ fi
 sudo cp -a "$REPO_DIR/backend/migrations/." "$DEPLOY_DIR/migrations/"
 ok "数据库迁移文件已同步"
 
-# Caddyfile 差异自动同步：备份旧文件 → 替换为版本库版本 → reload
-# 手动修改的域名等自定义内容请从旧备份中恢复（路径见摘要）
-BACKUP_CADDY=""
-if [ -f /etc/caddy/Caddyfile ] && ! sudo diff -q "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile >/dev/null 2>&1; then
+# ============================================================
+# Caddyfile 同步（默认不覆盖本地自定义，`--force` 强制应用仓库版）
+# ============================================================
+# 原则：仓库 caddy/Caddyfile 是"基线版"，生产机可能被本地解开
+# https://:8443 / 443 等注释块（见 docs/external-access.md），这些自定义
+# 只会存在于 /etc/caddy/Caddyfile，仓库没有对应内容。因此仅当线上文件仍是
+# 上次仓库部署的"原版"（内容哈希等于部署标记）时才自动替换为仓库新版；
+# 一旦被本地修改过则跳过，绝不复位线上配置。`--force` 可强制覆盖（先备份 +
+# validate，失败回滚）；install.sh 部署后写入部署标记。
+CADDY_CONF=/etc/caddy/Caddyfile
+CADDY_MARKER=/etc/caddy/.portalt-caddyfile.sha
+[ -f "$REPO_DIR/caddy/Caddyfile" ] || error "仓库缺少 caddy/Caddyfile"
+CADDY_REPO_SHA="$(sha256sum "$REPO_DIR/caddy/Caddyfile" | awk '{print $1}')"
+CADDY_LOCAL_SHA=""
+if sudo test -f "$CADDY_CONF"; then
+    CADDY_LOCAL_SHA="$(sudo sha256sum "$CADDY_CONF" | awk '{print $1}')"
+fi
+
+CADDY_NEEDS_SYNC=0
+if [ -z "$CADDY_LOCAL_SHA" ]; then
+    # 线上无文件：全新部署路径补齐（正常流程应已由 install.sh 完成）
+    CADDY_NEEDS_SYNC=1
+elif [ "$CADDY_LOCAL_SHA" != "$CADDY_REPO_SHA" ]; then
+    CADDY_DEPLOYED_SHA="$(sudo cat "$CADDY_MARKER" 2>/dev/null || true)"
+    if [ "$FORCE" = "1" ]; then
+        warn "检测到 /etc/caddy/Caddyfile 与仓库版不一致（可能含本地自定义），--force 将备份后用仓库版覆盖"
+        CADDY_NEEDS_SYNC=1
+    elif [ -n "$CADDY_DEPLOYED_SHA" ] && [ "$CADDY_LOCAL_SHA" = "$CADDY_DEPLOYED_SHA" ]; then
+        # 是上次仓库部署的原版（本次仓库版有更新），安全同步到新版
+        CADDY_NEEDS_SYNC=1
+    else
+        warn "检测到 /etc/caddy/Caddyfile 已被本地修改（非仓库原版），跳过自动同步以保留自定义配置"
+        warn "如需应用仓库新版，请先手动合并，或执行 bash deploy/update.sh --force"
+    fi
+fi
+
+if [ "$CADDY_NEEDS_SYNC" = "1" ]; then
     BACKUP_CADDY="/etc/caddy/Caddyfile.bak.$(date +%Y%m%d%H%M%S)"
-    info "备份旧 Caddyfile 到 $BACKUP_CADDY ..."
-    sudo cp /etc/caddy/Caddyfile "$BACKUP_CADDY"
-    sudo cp "$REPO_DIR/caddy/Caddyfile" /etc/caddy/Caddyfile
-    # 确保 plugins.d 目录存在（新版 Caddyfile import 此处）
-    sudo mkdir -p /etc/caddy/plugins.d
+    if sudo test -f "$CADDY_CONF"; then
+        info "备份旧 Caddyfile 到 $BACKUP_CADDY ..."
+        sudo cp "$CADDY_CONF" "$BACKUP_CADDY"
+    fi
+    # 确保目录存在（USE_CADDY=0 安装的机器可能尚无 /etc/caddy）
+    sudo mkdir -p /etc/caddy /etc/caddy/plugins.d
+    sudo cp "$REPO_DIR/caddy/Caddyfile" "$CADDY_CONF"
     if command -v caddy >/dev/null 2>&1; then
-        if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+        if sudo caddy validate --config "$CADDY_CONF" --adapter caddyfile >/dev/null 2>&1; then
             if [ "$SKIP_RESTART" = "0" ]; then
                 service_enable_now caddy || true
                 ok "Caddyfile 已更新并 reload"
             else
                 ok "Caddyfile 已更新（--skip-restart，未 reload）"
             fi
+            # 记录本次部署的仓库版哈希，供下次判断线上文件是否被本地修改
+            printf '%s\n' "$CADDY_REPO_SHA" | sudo tee "$CADDY_MARKER" >/dev/null
         else
             warn "新版 Caddyfile 校验失败，回滚到旧版本 ..."
-            sudo cp "$BACKUP_CADDY" /etc/caddy/Caddyfile
+            if sudo test -f "$BACKUP_CADDY"; then
+                sudo cp "$BACKUP_CADDY" "$CADDY_CONF"
+                warn "Caddyfile 已回滚（新版语法错误），旧备份保留在 $BACKUP_CADDY"
+            else
+                # 线上原本无 Caddyfile（全新补齐场景）：无旧版可回滚，删除新写入的无效文件
+                sudo rm -f "$CADDY_CONF"
+                warn "线上原本无 Caddyfile，已删除校验失败的仓库版（无旧备份可回滚）"
+            fi
             if [ "$SKIP_RESTART" = "0" ]; then
                 sudo systemctl reload caddy 2>/dev/null || true
             fi
-            warn "Caddyfile 已回滚（新版语法错误），旧备份保留在 $BACKUP_CADDY"
         fi
     else
         # 无 caddy 可执行文件：只落盘不 reload，依赖下次系统重启生效
+        printf '%s\n' "$CADDY_REPO_SHA" | sudo tee "$CADDY_MARKER" >/dev/null
         warn "caddy 命令不可用，Caddyfile 已更新但未 reload（下次重启生效）"
     fi
 fi

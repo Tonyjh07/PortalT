@@ -8,7 +8,7 @@ export default defineNuxtConfig({
   // Cloudflare Tunnel 转发时 Host 头为外部域名，需放行（否则 Vite 返回 403 阻止请求）
   vite: {
     server: {
-      allowedHosts: ['demo.tonyjh07.dpdns.org'],
+      allowedHosts: ['demo.tonyjh07.dpdns.org', 'portal.tonyjh07.dpdns.org'],
     },
   },
   elementPlus: {
