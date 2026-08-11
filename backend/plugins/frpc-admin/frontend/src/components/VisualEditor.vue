@@ -64,6 +64,25 @@ function setDomains(p: Proxy, v: string) {
     .map((s) => s.trim())
     .filter(Boolean)
 }
+
+// 是否使用远端端口（frp 中仅 tcp/udp；http/https 走 vhost 虚拟主机，
+// stcp/xtcp/sudp 走 secret_key，为它们配置 remote_port 会导致 frpc 启动失败）。
+// 空类型按 tcp 处理（frp 遗留 INI 语义缺省即 tcp）。
+function usesRemotePort(t: string): boolean {
+  return t === '' || t === 'tcp' || t === 'udp'
+}
+
+// 是否使用自定义域名（frp 中 http/https 使用，tcp/udp 不适用）。
+function usesCustomDomains(t: string): boolean {
+  return t === 'http' || t === 'https'
+}
+
+// 类型切换时清理该类型不支持的字段，避免非法值残留进配置。
+function onTypeChange(row: Proxy) {
+  if (!usesRemotePort(row.type)) row.remote_port = 0
+  if (!usesCustomDomains(row.type)) row.custom_domains = []
+  onProxyChange()
+}
 </script>
 
 <template>
@@ -148,7 +167,7 @@ function setDomains(p: Proxy, v: string) {
               size="small"
               style="width: 100%"
               :disabled="disabled"
-              @change="onProxyChange"
+              @change="onTypeChange(row)"
             >
               <el-option v-for="t in proxyTypes" :key="t" :label="t" :value="t" />
             </el-select>
@@ -182,6 +201,7 @@ function setDomains(p: Proxy, v: string) {
         <el-table-column label="远端端口" width="120">
           <template #default="{ row }">
             <el-input-number
+              v-if="usesRemotePort(row.type)"
               v-model="row.remote_port"
               :min="0"
               :max="65535"
@@ -191,17 +211,20 @@ function setDomains(p: Proxy, v: string) {
               :disabled="disabled"
               @change="onProxyChange"
             />
+            <span v-else class="field-na">—</span>
           </template>
         </el-table-column>
         <el-table-column label="自定义域名" min-width="180">
           <template #default="{ row }">
             <el-input
+              v-if="usesCustomDomains(row.type)"
               :model-value="domainsOf(row)"
               size="small"
               placeholder="逗号分隔多个域名"
               :disabled="disabled"
               @update:model-value="setDomains(row, $event); onProxyChange()"
             />
+            <span v-else class="field-na">—</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
@@ -228,5 +251,9 @@ function setDomains(p: Proxy, v: string) {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.field-na {
+  color: var(--el-text-color-placeholder);
 }
 </style>

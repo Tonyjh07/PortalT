@@ -142,7 +142,7 @@ func writeProxyINI(sec *ini.Section, p Proxy) {
 	if p.LocalPort != 0 {
 		_, _ = sec.NewKey("local_port", strconv.Itoa(p.LocalPort))
 	}
-	if p.RemotePort != 0 {
+	if p.RemotePort != 0 && proxyUsesRemotePort(p.Type) {
 		_, _ = sec.NewKey("remote_port", strconv.Itoa(p.RemotePort))
 	}
 	if len(p.CustomDomains) > 0 {

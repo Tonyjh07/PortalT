@@ -140,6 +140,124 @@ func TestSyntaxCheck(t *testing.T) {
 	assert.Error(t, SyntaxCheck([]byte("serverAddr = [broken"), "toml"))
 }
 
+// TestRenderDropsRemotePortForHTTP 回归：http/https 代理类型不适用 remote_port，
+// 渲染时必须丢弃（frp 会因 "proxy [x] type [http] doesn't support remote port" 启动失败）。
+func TestRenderDropsRemotePortForHTTP(t *testing.T) {
+	httpIni := `[common]
+server_addr = 1.2.3.4
+server_port = 7000
+
+[web]
+type = http
+local_port = 8080
+remote_port = 8800
+custom_domains = app.example.com
+`
+	c, err := Parse([]byte(httpIni), string(FormatAuto))
+	require.NoError(t, err)
+	require.Len(t, c.Proxies, 1)
+	require.Equal(t, 8800, c.Proxies[0].RemotePort, "解析侧应保留 remote_port（回显用）")
+
+	out, err := c.Render()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out), "remote_port", "http 代理不应渲染 remote_port")
+	assert.Contains(t, string(out), "custom_domains = app.example.com", "custom_domains 应保留")
+
+	httpToml := `serverAddr = "1.2.3.4"
+serverPort = 7000
+
+[[proxies]]
+name = "web"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 8080
+remotePort = 8800
+customDomains = ["app.example.com"]
+`
+	c2, err := Parse([]byte(httpToml), string(FormatAuto))
+	require.NoError(t, err)
+	require.Len(t, c2.Proxies, 1)
+	require.Equal(t, 8800, c2.Proxies[0].RemotePort)
+
+	out2, err := c2.Render()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out2), "remotePort", "http 代理不应渲染 remotePort")
+	assert.Contains(t, string(out2), "customDomains", "customDomains 应保留")
+
+	// https 类型同样丢弃 remote_port
+	httpsIni := `[common]
+server_addr = 1.2.3.4
+server_port = 7000
+
+[sec]
+type = https
+local_port = 8443
+remote_port = 8444
+custom_domains = secure.example.com
+`
+	c3, err := Parse([]byte(httpsIni), string(FormatAuto))
+	require.NoError(t, err)
+	out3, err := c3.Render()
+	require.NoError(t, err)
+	assert.NotContains(t, string(out3), "remote_port", "https 代理不应渲染 remote_port")
+	assert.Contains(t, string(out3), "custom_domains = secure.example.com")
+}
+
+// TestRenderKeepsRemotePortForTCP 回归：tcp/udp 代理仍正常渲染 remote_port。
+func TestRenderKeepsRemotePortForTCP(t *testing.T) {
+	keyByFormat := map[Format]string{FormatINI: "remote_port", FormatTOML: "remotePort"}
+	for _, src := range []string{sampleINI, sampleTOML} {
+		c, err := Parse([]byte(src), string(FormatAuto))
+		require.NoError(t, err)
+		out, err := c.Render()
+		require.NoError(t, err)
+		assert.Contains(t, string(out), keyByFormat[c.Format], "tcp 代理应渲染 %s", keyByFormat[c.Format])
+		assert.Contains(t, string(out), "6000", "tcp 代理的 remote_port 值应保留")
+	}
+}
+
+// TestRenderKeepsRemotePortWithoutType 回归：代理缺省 type（frp INI 语义视为 tcp）
+// 时 remote_port 必须保留，避免旧配置 round-trip 静默丢端口。
+func TestRenderKeepsRemotePortWithoutType(t *testing.T) {
+	src := `[common]
+server_addr = 1.2.3.4
+server_port = 7000
+
+[ssh]
+local_port = 22
+remote_port = 6000
+`
+	c, err := Parse([]byte(src), string(FormatAuto))
+	require.NoError(t, err)
+	require.Len(t, c.Proxies, 1)
+	assert.Equal(t, "", c.Proxies[0].Type, "原文未写 type")
+
+	out, err := c.Render()
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "remote_port = 6000", "缺省 type 的代理应保留 remote_port")
+}
+
+// TestRenderKeepsRemotePortForUDP 回归：udp 代理（frp 中同样使用 remote_port）正常渲染。
+func TestRenderKeepsRemotePortForUDP(t *testing.T) {
+	src := `[common]
+server_addr = 1.2.3.4
+server_port = 7000
+
+[dns]
+type = udp
+local_port = 53
+remote_port = 5353
+`
+	c, err := Parse([]byte(src), string(FormatAuto))
+	require.NoError(t, err)
+	require.Len(t, c.Proxies, 1)
+	assert.Equal(t, "udp", c.Proxies[0].Type)
+
+	out, err := c.Render()
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "remote_port = 5353", "udp 代理应保留 remote_port")
+}
+
 func TestParseErrors(t *testing.T) {
 	_, err := Parse([]byte("[common]\nserver_port = "), "ini")
 	assert.NoError(t, err) // ini 宽松：server_port 空值忽略，不算错

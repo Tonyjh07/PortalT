@@ -189,7 +189,7 @@ func renderTOML(c *Config) ([]byte, error) {
 			if p.LocalPort != 0 {
 				m["localPort"] = p.LocalPort
 			}
-			if p.RemotePort != 0 {
+			if p.RemotePort != 0 && proxyUsesRemotePort(p.Type) {
 				m["remotePort"] = p.RemotePort
 			}
 			if len(p.CustomDomains) > 0 {

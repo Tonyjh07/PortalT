@@ -328,6 +328,48 @@ func TestPutConfigRawAutoTOML(t *testing.T) {
 	assert.Contains(t, content, "9.9.9.9")
 }
 
+// TestPutConfigStructuredHTTPDropsRemotePort 回归：结构化保存 http/https 代理时，
+// 即使携带 remote_port 也不渲染该键（frp http/https 类型不支持 remote port，命中
+// 会导致 frpc 启动失败；可视化界面也会按类型隐藏该字段，此处为后端兜底）。
+func TestPutConfigStructuredHTTPDropsRemotePort(t *testing.T) {
+	app, srv, hs := newTestApp(t)
+	srv.setFile("/etc/frp/frpc.ini", "[common]\nserver_addr = 1.2.3.4\nserver_port = 7000\n")
+
+	// 结构化保存：http 代理带了 remote_port（模拟可视化界面上残留/误填）
+	reqBody := `{"structured":{"format":"ini","server":{"server_addr":"1.2.3.4","server_port":7000},"proxies":[{"name":"web","type":"http","local_ip":"127.0.0.1","local_port":8080,"remote_port":8800,"custom_domains":["app.example.com"]}]}}`
+	resp := doReq(t, "PUT", hs.URL+"/api/config", reqBody)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out SaveConfigResponse
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out))
+	assert.True(t, out.SyntaxOK, "结构化保存应通过语法检查: %s", out.SyntaxError)
+	assert.True(t, out.Applied)
+
+	content, ok := srv.getFile("/etc/frp/frpc.ini")
+	require.True(t, ok)
+	assert.Contains(t, content, "custom_domains = app.example.com")
+	assert.NotContains(t, content, "remote_port", "http 代理落盘不应含 remote_port")
+	assert.NotContains(t, content, "8800", "http 代理的 remote_port 值不应落盘")
+
+	// TOML 版本（切换连接指向 .toml 配置）
+	conn, _ := app.store.Get()
+	conn.ConfigPath = "/etc/frp/frpc.toml"
+	conn.Format = "toml"
+	require.NoError(t, app.store.Save(conn))
+	srv.setFile("/etc/frp/frpc.toml", "serverAddr = \"1.2.3.4\"\nserverPort = 7000\n")
+	reqBody = `{"structured":{"format":"toml","server":{"server_addr":"1.2.3.4","server_port":7000},"proxies":[{"name":"web","type":"http","local_ip":"127.0.0.1","local_port":8080,"remote_port":8800,"custom_domains":["app.example.com"]}]}}`
+	resp = doReq(t, "PUT", hs.URL+"/api/config", reqBody)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	out2 := SaveConfigResponse{}
+	require.NoError(t, json.Unmarshal([]byte(readBody(t, resp)), &out2))
+	assert.True(t, out2.Applied)
+
+	tcontent, ok := srv.getFile("/etc/frp/frpc.toml")
+	require.True(t, ok)
+	assert.Contains(t, tcontent, "customDomains")
+	assert.NotContains(t, tcontent, "remotePort", "http 代理 TOML 落盘不应含 remotePort")
+	assert.NotContains(t, tcontent, "8800")
+}
+
 // TestPutConfigStructuredAutoFormat 回归：结构化保存未显式指定格式 + 连接格式
 // auto 时，应回退为 ini（Detect 空原文默认 ini）而不触发 Render 的 auto 报错。
 func TestPutConfigStructuredAutoFormat(t *testing.T) {

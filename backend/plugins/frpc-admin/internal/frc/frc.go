@@ -50,6 +50,16 @@ type Proxy struct {
 	Extra         map[string]any `json:"extra,omitempty"`
 }
 
+// proxyUsesRemotePort 该代理类型是否使用 remote_port（frp 中仅 tcp/udp 使用）。
+// http/https 走 vhost 虚拟主机（custom_domains），stcp/xtcp/sudp 走 secret_key，
+// 为其配置 remote_port 会导致 frpc 启动失败（"proxy [x] type [y] doesn't support
+// remote port"）。渲染时对不使用 remote_port 的类型丢弃该值，避免损坏配置。
+// 空类型按 tcp 处理（frp 遗留 INI 语义中代理 type 缺省即视为 tcp，见 BaseProxyConf
+// "By default, this value is tcp"），避免合法旧配置 round-trip 时静默丢端口。
+func proxyUsesRemotePort(t string) bool {
+	return t == "" || t == "tcp" || t == "udp"
+}
+
 // Config 完整 frpc 配置的结构化表示。
 type Config struct {
 	Format  Format         `json:"format"`
