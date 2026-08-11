@@ -226,7 +226,12 @@ func TestDefaultESXIAdminCaddyRules(t *testing.T) {
 	// 每个 ESXi handle 都须带鉴权闸口回调
 	assert.Contains(t, DefaultESXIAdminCaddyRules, "forward_auth 127.0.0.1:8080")
 	assert.Contains(t, DefaultESXIAdminCaddyRules, "/api/v1/auth/gate?perm=esxi-admin:use")
+	// /ha-nfc NFC 端点：虚拟机导出/下载时 HEAD 测 size，必须代理
+	assert.Contains(t, DefaultESXIAdminCaddyRules, "handle /ha-nfc/*")
 	// 版本迁移：新默认规则须与旧无鉴权版默认不同
 	assert.NotEqual(t, DefaultESXIAdminCaddyRules, DefaultESXIAdminCaddyRulesV1)
 	assert.NotContains(t, DefaultESXIAdminCaddyRulesV1, "forward_auth")
+	// 缺 /ha-nfc 的旧默认（V2）须与新默认不同
+	assert.NotEqual(t, DefaultESXIAdminCaddyRules, DefaultESXIAdminCaddyRulesV2)
+	assert.NotContains(t, DefaultESXIAdminCaddyRulesV2, "handle /ha-nfc/*")
 }

@@ -143,7 +143,10 @@ ESXi 反代规则**由 `esxi-admin` 插件的 `caddy_rules` 默认值**（`Defau
 - `/esxi/*` → 剥前缀后指向 ESXi（页面与相对路径静态资源；iframe 地址
   `ESXI_WEB_URL=/esxi/ui/` 同源反代，本地 http 与隧道 https 均可用）；
 - ESXi 资源/API 走**绝对路径**，需全部反代：`/ui/*`、`/sdk*`、`/sts*`、`/ticket*`、
-  `/vfeed/*`、`/converter/*`、`/eam/*`、`/pbm/*`、`/sms/*`、`/vsan/*`；
+  `/vfeed/*`、`/converter/*`、`/eam/*`、`/pbm/*`、`/sms/*`、`/vsan/*`、`/ha-nfc/*`；
+- `/ha-nfc/*` 是 ESXi NFC（Network File Copy）端点：Host Client **导出 OVF/OVA** 时对
+  每个文件发 HEAD 读取 Content-Length（size）后再 GET 下载——漏配会落到前端 3001 兜底
+  （text/html），导出即报 `Required property not defined: size`；
 - `/screen*` 是 VM **控制台预览截图**端点（`/screen?id=<moid>&ts=<时间戳>`，相对路径，
   轮询刷新）——漏配会落到前端 3001 兜底，预览图报 `blob:... ERR_FILE_NOT_FOUND`；
 - **必须剥除的响应头**：

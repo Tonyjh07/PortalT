@@ -259,9 +259,9 @@ func envSeconds(key string, fallback int64) time.Duration {
 // seedDefaultAccessPlugins 幂等引导默认 access 插件（esxi-admin）。
 // 已存在时：
 //   - 类型为 access 且 CaddyRules 为空 → 回填默认反代规则（管理员配置优先，不覆盖）；
-//   - CaddyRules 归一化后等于旧默认（DefaultESXIAdminCaddyRulesV1，无鉴权版）→ 升级为
-//     带鉴权闸口的新默认规则（逐行去空白/统一换行后比较，容忍 CRLF 与 textarea 保存差异；
-//     仅匹配旧默认形态才覆盖，保留管理员自定义）；
+//   - CaddyRules 归一化后等于旧默认（DefaultESXIAdminCaddyRulesV1/V2，即历史无鉴权或
+//     缺 /ha-nfc 的默认）→ 升级为当前默认规则（逐行去空白/统一换行后比较，容忍 CRLF 与
+//     textarea 保存差异；仅匹配旧默认形态才覆盖，保留管理员自定义）；
 //   - CaddyRules 形似旧版 ESXi 反代（引用 {env.ESXI_UPSTREAM}）但未含鉴权闸口、又无法
 //     归一化匹配 → 打告警提示手动升级，避免无鉴权暴露被静默保留；
 // 记录不存在则创建。
@@ -289,7 +289,8 @@ func seedDefaultAccessPlugins(ctx context.Context, repo ports.PluginRepository) 
 			existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
 			return repo.Save(existing)
 		}
-		if normalizeRules(existing.CaddyRules) == normalizeRules(pluginhost.DefaultESXIAdminCaddyRulesV1) {
+		if norm := normalizeRules(existing.CaddyRules); norm == normalizeRules(pluginhost.DefaultESXIAdminCaddyRulesV1) ||
+			norm == normalizeRules(pluginhost.DefaultESXIAdminCaddyRulesV2) {
 			existing.CaddyRules = pluginhost.DefaultESXIAdminCaddyRules
 			return repo.Save(existing)
 		}

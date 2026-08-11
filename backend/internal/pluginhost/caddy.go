@@ -139,14 +139,12 @@ handle /vsan/* {
 	}
 }`
 
-// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则：
-// ESXi Host Client 反代（/esxi/* 剥前缀 + 绝对路径资源 + /ticket* WebSocket），
-// 作为该插件 CaddyRules 的默认值，管理员可在插件管理界面修改后重载。
-// 每个 handle 先经 forward_auth 回调门户鉴权闸口（/api/v1/auth/gate?perm=esxi-admin:use，
-// 校验请求 cookie 中的 access/refresh 令牌与 esxi-admin:use 权限），
-// 未登录返回 401、无权限返回 403，放行后才反代到 ESXi。
-// 目标主机由 {env.ESXI_UPSTREAM} 在运行时解析（Caddy 进程环境变量）。
-const DefaultESXIAdminCaddyRules = `handle /esxi/* {
+// DefaultESXIAdminCaddyRulesV2 esxi-admin 插件缺 /ha-nfc 时的默认规则（历史值，带鉴权闸口）：
+// ESXi Host Client 反代（/esxi/* 剥前缀 + 绝对路径资源 + /ticket* WebSocket；
+// 缺 /ha-nfc NFC 端点，虚拟机导出/下载不可用），
+// 仅用于 seed 迁移：识别旧默认带鉴权规则并升级为含 /ha-nfc 的新默认
+// （DefaultESXIAdminCaddyRules），归一化精确匹配才覆盖，保留管理员自定义。
+const DefaultESXIAdminCaddyRulesV2 = `handle /esxi/* {
 	forward_auth 127.0.0.1:8080 {
 		uri /api/v1/auth/gate?perm=esxi-admin:use
 	}
@@ -282,6 +280,30 @@ handle /sms/* {
 	}
 }
 handle /vsan/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}`
+
+// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则（含 /ha-nfc）：
+// ESXi Host Client 反代（/esxi/* 剥前缀 + /ui|/sdk 等绝对路径资源 + /ticket* WebSocket），
+// 作为该插件 CaddyRules 的默认值，管理员可在插件管理界面修改后重载。
+// 每个 handle 先经 forward_auth 回调门户鉴权闸口（/api/v1/auth/gate?perm=esxi-admin:use，
+// 校验请求 cookie 中的 access/refresh 令牌与 esxi-admin:use 权限），
+// 未登录返回 401、无权限返回 403，放行后才反代到 ESXi。
+// /ha-nfc/* 是 ESXi NFC（Network File Copy）端点：Host Client 虚拟机导出/拉取文件时
+// 对其发 HEAD 读取各文件 Content-Length（size）后再 GET 下载；该路径缺代理时会被门户
+// SPA 兜底命中（text/html），导出即报 "Required property not defined: size"。
+// 目标主机由 {env.ESXI_UPSTREAM} 在运行时解析（Caddy 进程环境变量）。
+const DefaultESXIAdminCaddyRules = DefaultESXIAdminCaddyRulesV2 + `
+handle /ha-nfc/* {
 	forward_auth 127.0.0.1:8080 {
 		uri /api/v1/auth/gate?perm=esxi-admin:use
 	}

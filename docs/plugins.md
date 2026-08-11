@@ -57,14 +57,17 @@ Caddyfile 主文件尾部：import plugins.d/*.caddy
   跨插件路径冲突由 `handle` 声明顺序决定。只应写本插件的 `handle` 块，不要包含站点监听、
   全局指令等（会破坏 Caddyfile 语法）。部署机建议规则落盘后做 `caddy validate` 校验。
 - 现状说明：`esxi-admin` 插件的 `caddy_rules` 默认值（`DefaultESXIAdminCaddyRules`）是 ESXi
-  反代规则的**唯一来源**（含 `/esxi/*`、`/ui/*`、`/screen*`、`/sdk*`、`/ticket*` 等 handle，
-  目标主机由 `{env.ESXI_UPSTREAM}` 运行时解析）；**内置 `caddy/Caddyfile` 已瘦身、不再包含
-  ESXi handle**——停用/删除该插件即移除规则文件，`/esxi/*` 不再反代（访问自然收回）。
+  反代规则的**唯一来源**（含 `/esxi/*`、`/ui/*`、`/screen*`、`/sdk*`、`/ticket*`、`/ha-nfc/*`
+  等 handle，目标主机由 `{env.ESXI_UPSTREAM}` 运行时解析）；**内置 `caddy/Caddyfile` 已瘦身、
+  不再包含 ESXi handle**——停用/删除该插件即移除规则文件，`/esxi/*` 不再反代（访问自然收回）。
+  `/ha-nfc/*` 是 ESXi NFC 端点，Host Client 导出 OVF/OVA 时对其 HEAD 测文件 size，漏配会落到
+  前端 SPA 兜底导致导出报 `Required property not defined: size`。
 - **鉴权闸口**：默认规则每个 handle 先经 `forward_auth 127.0.0.1:8080 { uri
   /api/v1/auth/gate?perm=esxi-admin:use }` 回调门户鉴权（校验请求 cookie 中的
   access/refresh 令牌 + `esxi-admin:use` 权限），未登录 401、无权限 403，放行才反代；
-  旧的无鉴权默认值（`DefaultESXIAdminCaddyRulesV1`）会被启动 seed 自动升级为新默认值
-  （精确匹配才覆盖，保留管理员自定义）。
+历史默认（无鉴权版 `DefaultESXIAdminCaddyRulesV1`、缺 `/ha-nfc` 版
+   `DefaultESXIAdminCaddyRulesV2`）会被启动 seed 自动升级为新默认值
+   （精确匹配才覆盖，保留管理员自定义）。
 - 网关对身份透传不依赖 Caddy `copy_headers`——闸口直接读同源 cookie，无需注入额外头。
 
 ### 示例：esxi-admin
