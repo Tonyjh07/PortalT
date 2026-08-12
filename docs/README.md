@@ -10,6 +10,7 @@
 | [how-to-use.md](./how-to-use.md) | 构建与部署指南（Debian + ESXi）：§3 一键脚本部署（`deploy/install.sh` + `update.sh`）→ 手工构建 → systemd 部署 → 接入 ESXi → Caddy 反代 → 远程桌面 → 验证/排错 |
 | [interfaces.md](./interfaces.md) | 接口文档：HTTP 接口、错误码、领域模型 JSON 契约 |
 | [plugins.md](./plugins.md) | 插件开发指南：access / native 两型、access 与 Caddy 交互、manifest 契约 |
+| [access-plugin-admin.md](./access-plugin-admin.md) | access 插件管理手册：字段/校验、配置编写（iframe/Caddy 规则/端点）、管理 API 与界面操作、排查 |
 | [remote-desktop.md](./remote-desktop.md) | 远程访问指南（Phase 8）：架构、guac.*/rustdesk.* 连接参数、质量/流畅度模式、使用步骤、FAQ |
 | [external-access.md](./external-access.md) | 外部访问指南（Cloudflare Tunnel）：隧道配置、allowedHosts、WS 透传、验证方法 |
 
