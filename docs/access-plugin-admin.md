@@ -96,9 +96,14 @@ handle /esxi/* {
 
 ```
 handle /omv {
-	redir /omv/ permanent
+	redir https://{http.request.host}/omv/?{query} permanent
 }
 ```
+
+> **坑**：`redir` 的第一个参数若是路径形式（`/` 开头）会被 Caddy 当作 **matcher** 而非重定向目标——
+> `redir /omv/ permanent` 实际解析为"匹配 `/omv/` 路径、重定向到字面 `permanent`"，无斜杠访问
+> 不匹配任何处理器、返回空响应而非 301。目标地址必须以 `https://...`/`/` 之外的形式给出
+> （如上例用 `{http.request.host}` 拼完整 URL）。
 
 > 提示：目标服务若以**绝对路径**引用资源（如 `/javascript/...`、`/api/...`），子路径反代会 404，
 > 需评估目标是否支持子目录部署（参考：ESXi Host Client 用根路径 handle `/ui/*` 反代；OMV/MCSManager
@@ -206,7 +211,7 @@ curl -X DELETE http://127.0.0.1:8080/api/v1/plugins/omv-admin \
 | 现象 | 排查 |
 |------|------|
 | 插件页显示"插件不存在或无权访问" | 插件未启用、`permission` 未授予当前用户、未登录 |
-| 页面空白 / 404 | ① 反代未生效：列表状态"待重载"或 `caddy_applied=false` → 点"重载 Caddy" ② iframe 目标禁嵌未剥 `X-Frame-Options` ③ 目标资源为绝对路径，子路径反代 404（见 §3.2 提示）④ 相对路径缺尾斜杠 |
+| 页面空白 / 404 | ① 反代未生效：列表状态"待重载"或 `caddy_applied=false` → 点"重载 Caddy" ② iframe 目标禁嵌未剥 `X-Frame-Options` ③ 目标资源为绝对路径，子路径反代 404（见 §3.2 提示）④ 相对路径缺尾斜杠（`/omv` 不匹配 `handle /omv/*`，落到门户 404；应配 redir 兜底，见 §3.2） |
 | https 门户嵌 http 页面无响应 | mixed content 被浏览器拦截，改走 Caddy 反代 |
 | 保存报"未知权限" | `permission` 不在权限字典（`GET /api/v1/roles/permissions` 查字典，或用空值） |
 | "重载 Caddy" 503 | 部署机未配置 `PLUGIN_CADDY_DIR`，规则不会落盘 |
