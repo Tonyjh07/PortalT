@@ -1,8 +1,11 @@
 # frpc 配置管理插件（frpc-admin）实施计划
 
 > 状态：**后端核心已完成**（cmd + internal/{configstore,sshx,frc,api}，单测全绿）；
-> 待做：§5 的 Makefile/README/static、§3 的 `frontend/` Vue SPA、前端构建与冒烟、
-> `docs/` 同步。本文档为实施蓝图，落地后以 `docs/plugins.md`、`docs/interfaces.md`、
+> **增强已完成**：①frpc 日志查看（自动检测来源：配置真实日志路径 → tail 文件，
+> 否则 journalctl，unit 从重启命令提取默认 frpc）；②历史备份查看与恢复（恢复前
+> 自动备份当前配置，失败回滚）；前端 SPA 已补齐（含日志/历史备份入口）。
+> **待做**：§5 的 Makefile/README、投放与冒烟、`docs/interfaces.md`。
+> 本文档为实施蓝图，落地后以 `docs/plugins.md`、`docs/interfaces.md`、
 > `About.md` 进度表为准。
 
 ## 1. 目标与范围
@@ -81,6 +84,10 @@
 | GET | `/connections/:vmId/probe` | SSH 探测：frpc 版本、配置路径、格式检测建议 |
 | GET | `/vms/:vmId/config` | SSH 读取并解析 frpc 配置 → 结构化 JSON + 原文 |
 | PUT | `/vms/:vmId/config` | **保存（核心流程，见 §6）**：结构化或原文 → 备份 → 语法检查 → 应用 → 重启 → 失败回滚 |
+| GET | `/api/logs?lines=` | 查看 frpc 日志（来源自动检测：配置声明真实日志路径（TOML `log.to`/INI `log_file`，非 console/stderr）→ `tail -n`，否则 `journalctl -u <unit> --no-pager`；unit 从重启命令提取、默认 frpc；行数 50-2000 钳制） |
+| GET | `/api/backups` | 列出远端备份 `<path>.bak.<ts>`（stat 一次取路径+大小，按 ts 倒序） |
+| GET | `/api/backups/{ts}` | 查看指定备份内容（ts 纯数字校验，服务端拼路径防穿越） |
+| POST | `/api/backups/{ts}/restore` | 恢复备份：先备份当前配置 → 覆盖写入 → 重启 → 失败回滚（响应复用保存响应体） |
 
 请求体（PUT config）：
 ```json

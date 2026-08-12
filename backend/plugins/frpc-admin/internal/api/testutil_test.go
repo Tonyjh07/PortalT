@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,6 +28,8 @@ type testSSHServer struct {
 	failRestart bool
 	// failWrite 置真时 cp 到目标返回失败。
 	failWrite bool
+	// failRestoreCP 置真时仅恢复流程的 cp（目标为原配置）失败，用于验证回滚。
+	failRestoreCP bool
 }
 
 func newTestSSHServer() *testSSHServer {
@@ -156,8 +159,15 @@ func (s *testSSHServer) execLocked(ch ssh.Channel, cmd string) int {
 				_, _ = io.WriteString(ch, "cp: permission denied\n")
 				return 1
 			}
+			dst := stripQ(parts[2])
+			if s.failRestoreCP && !strings.Contains(dst, ".bak.") {
+				// 仅让"写原配置"这一条 cp 失败一次；后续回滚的 cp 应成功
+				s.failRestoreCP = false
+				_, _ = io.WriteString(ch, "cp: error writing\n")
+				return 1
+			}
 			if v, ok := s.files[stripQ(parts[1])]; ok {
-				s.files[stripQ(parts[2])] = v
+				s.files[dst] = v
 			}
 		}
 		return 0
@@ -166,6 +176,35 @@ func (s *testSSHServer) execLocked(ch ssh.Channel, cmd string) int {
 		delete(s.files, path)
 		return 0
 	case strings.Contains(cmd, "ls -1t"):
+		// 备份清理：列出 .bak.* 文件供 tail -n +N 截断（测试无需真实删除）
+		prefix := stripQ(partsBetween(cmd, "ls -1t ", ".bak.*"))
+		for p := range s.files {
+			if strings.HasPrefix(p, prefix+".bak.") {
+				_, _ = io.WriteString(ch, p+"\n")
+			}
+		}
+		return 0
+	case strings.HasPrefix(cmd, "stat -c "):
+		// 备份列表：stat -c '%n %s' '<path>'.bak.* → 每行 "路径 大小"
+		prefix := stripQ(partsBetween(cmd, "stat -c '%n %s' ", ".bak.*"))
+		for p, v := range s.files {
+			if strings.HasPrefix(p, prefix+".bak.") {
+				_, _ = io.WriteString(ch, fmt.Sprintf("%s %d\n", p, len(v)))
+			}
+		}
+		return 0
+	case strings.HasPrefix(cmd, "tail -n "):
+		// 日志文件模式：tail -n <n> '<path>' → 文件内容（读 files 映射）
+		path := stripQ(lastField(cmd))
+		if v, ok := s.files[path]; ok {
+			_, _ = io.WriteString(ch, v)
+			return 0
+		}
+		_, _ = io.WriteString(ch, "No such file\n")
+		return 1
+	case strings.HasPrefix(cmd, "journalctl "):
+		_, _ = io.WriteString(ch, "Jun 03 10:00:01 host frpc[123]: [sshd] 2024/06/03 10:00:01 [I] login to server success\n")
+		_, _ = io.WriteString(ch, "Jun 03 10:00:02 host frpc[123]: [sshd] 2024/06/03 10:00:02 [I] start proxy success\n")
 		return 0
 	case strings.Contains(cmd, "systemctl restart") || strings.Contains(cmd, "restart frpc"):
 		if s.failRestart {
@@ -199,6 +238,28 @@ func stripQ(s string) string {
 		return s[1 : len(s)-1]
 	}
 	return s
+}
+
+// partsBetween 提取命令中位于 prefix 与 suffix 之间的片段（不含首尾）。
+func partsBetween(cmd, prefix, suffix string) string {
+	start := strings.Index(cmd, prefix)
+	if start < 0 {
+		return ""
+	}
+	s := cmd[start+len(prefix):]
+	if i := strings.Index(s, suffix); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// lastField 返回命令的最后一个空白分隔字段（tail -n 5 '<path>' → '<path>'）。
+func lastField(s string) string {
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
 }
 
 // newTestApp 构造带内存存储 + 假 SSH 服务器的 App 与请求客户端。

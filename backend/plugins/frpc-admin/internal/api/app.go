@@ -61,6 +61,12 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/config", a.handleGetConfig)
 	mux.HandleFunc("PUT /api/config", a.handlePutConfig)
 
+	// 日志查看 + 备份管理
+	mux.HandleFunc("GET /api/logs", a.handleGetLogs)
+	mux.HandleFunc("GET /api/backups", a.handleListBackups)
+	mux.HandleFunc("GET /api/backups/{ts}", a.handleGetBackup)
+	mux.HandleFunc("POST /api/backups/{ts}/restore", a.handleRestoreBackup)
+
 	// 静态前端（仅非 /api 路径；插件进程只监听回环，且宿主静态反代拒绝 /api）
 	if a.staticDir != "" {
 		mux.HandleFunc("/", a.handleStatic)

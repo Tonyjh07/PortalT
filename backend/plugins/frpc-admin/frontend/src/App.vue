@@ -14,6 +14,8 @@ import HostInfoDialog from './components/HostInfoDialog.vue'
 import VisualEditor from './components/VisualEditor.vue'
 import RawEditor from './components/RawEditor.vue'
 import ResultPanel from './components/ResultPanel.vue'
+import LogsDialog from './components/LogsDialog.vue'
+import BackupsDialog from './components/BackupsDialog.vue'
 
 type EditMode = 'visual' | 'raw'
 
@@ -30,6 +32,8 @@ const rawContent = ref('')
 const saving = ref(false)
 const lastResult = ref<SaveConfigResponse | null>(null)
 const dirty = ref(false)
+const logsVisible = ref(false)
+const backupsVisible = ref(false)
 
 const connected = computed(() => !!conn.value)
 const connLabel = computed(() => {
@@ -210,12 +214,20 @@ onMounted(async () => {
       </template>
 
       <template v-else>
-        <!-- 操作行：模式切换 + 保存 -->
+        <!-- 操作行：模式切换 + 日志/备份 + 保存 -->
         <div class="action-bar">
-          <el-radio-group :model-value="mode" size="default" @change="onModeChange">
-            <el-radio-button value="visual">可视化编辑</el-radio-button>
-            <el-radio-button value="raw">配置文件编辑</el-radio-button>
-          </el-radio-group>
+          <div class="action-left">
+            <el-radio-group :model-value="mode" size="default" @change="onModeChange">
+              <el-radio-button value="visual">可视化编辑</el-radio-button>
+              <el-radio-button value="raw">配置文件编辑</el-radio-button>
+            </el-radio-group>
+            <el-button size="default" @click="logsVisible = true">
+              日志
+            </el-button>
+            <el-button size="default" @click="backupsVisible = true">
+              历史备份
+            </el-button>
+          </div>
           <div class="action-right">
             <el-tag v-if="dirty" type="primary" size="default" effect="plain">有未保存修改</el-tag>
             <el-button type="primary" :loading="saving" @click="onSave">
@@ -252,6 +264,10 @@ onMounted(async () => {
       :existing="conn || undefined"
       @saved="onHostInfoSaved"
     />
+
+    <!-- 日志 / 历史备份弹窗 -->
+    <LogsDialog v-model="logsVisible" />
+    <BackupsDialog v-model="backupsVisible" />
   </div>
 </template>
 
@@ -319,6 +335,13 @@ onMounted(async () => {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.action-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .action-right {

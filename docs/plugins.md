@@ -187,14 +187,20 @@ PortalT ──spawn──▶ 插件进程（env：PORTALT_PLUGIN_ID / PORTALT_PL
   宿主 API 反代据此硬校验；插件侧不信任客户端身份头。
 - **能力**：通过 SSH 管理目标主机的 frpc 配置（单连接模型，不依赖 PortalT 的 VM 列表）——
   SSH 连接配置持久化（密码脱敏）、frp 版本/配置路径探测、frpc 配置结构化（INI/TOML 双格式）+ 原文双模式编辑，
-  保存 = 备份 + 语法检查 + 应用 + 重启，失败自动回滚（回滚亦重启，命令用用户配置值）。
+  保存 = 备份 + 语法检查 + 应用 + 重启，失败自动回滚（回滚亦重启，命令用用户配置值）；
+  frpc 日志查看（来源自动检测：配置声明真实日志路径（TOML `log.to`/INI `log_file`，非 console/stderr）→ `tail -n`，
+  否则 `journalctl -u <unit> --no-pager`，unit 从重启命令提取、默认 frpc）；
+  历史备份查看与恢复（恢复前自动备份当前配置，同样失败回滚，可回退）。
 - **API**：`GET/PUT/DELETE /api/connection`（连接配置，凭据脱敏）、`POST /api/probe`（探测）、
-  `GET/PUT /api/config`（读写 frpc 配置）——全部针对已保存的唯一连接，不再携带 vmId。
-- **sudo 语义**：连接配置 `sudo_enabled` 决定是否经 sudo 写文件/备份/回滚/重启；
+  `GET/PUT /api/config`（读写 frpc 配置）、`GET /api/logs?lines=`（日志）、
+  `GET /api/backups` / `GET /api/backups/{ts}` / `POST /api/backups/{ts}/restore`（备份管理）——
+  全部针对已保存的唯一连接，不再携带 vmId。
+- **sudo 语义**：连接配置 `sudo_enabled` 决定是否经 sudo 写文件/备份/回滚/重启/读日志；
   sudo 密码为空回退登录密码。
 - 部署：构建 `cmd/frpc-admin` + manifest.json + static/（前端 SPA 已含）投放
   `PLUGINS_DIR/frpc-admin/`，启用后从 `/native/frpc-admin/` 访问。
-- 后端保存链路单测覆盖备份/回滚/重启失败等路径（`internal/api`，testify）。
+- 前端：SPA（Vite+Vue3+Element Plus），构建产物提交到 `static/`；action-bar 含「日志」「历史备份」入口。
+- 后端保存/日志/备份链路单测覆盖备份/回滚/重启失败等路径（`internal/api`，testify）。
 
 ## 常见坑
 

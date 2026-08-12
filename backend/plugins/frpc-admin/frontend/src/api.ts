@@ -148,3 +148,44 @@ export function saveConfig(req: SaveConfigRequest): Promise<SaveConfigResponse> 
     body: JSON.stringify(req),
   })
 }
+
+export interface LogsResponse {
+  source: 'journal' | 'file'
+  path?: string
+  lines: number
+  content?: string
+  error?: string
+}
+
+export interface BackupInfo {
+  path: string
+  ts: string
+  size: number
+}
+
+export interface ListBackupsResponse {
+  backups: BackupInfo[]
+}
+
+export interface BackupContentResponse {
+  path: string
+  ts: string
+  size: number
+  content: string
+}
+
+export function getLogs(lines = 200): Promise<LogsResponse> {
+  return request<LogsResponse>(`${PLUGIN_API}/logs?lines=${lines}`)
+}
+
+export function listBackups(): Promise<ListBackupsResponse> {
+  return request<ListBackupsResponse>(`${PLUGIN_API}/backups`)
+}
+
+export function getBackup(ts: string): Promise<BackupContentResponse> {
+  return request<BackupContentResponse>(`${PLUGIN_API}/backups/${ts}`)
+}
+
+export function restoreBackup(ts: string): Promise<SaveConfigResponse> {
+  return request<SaveConfigResponse>(`${PLUGIN_API}/backups/${ts}/restore`, { method: 'POST' })
+}
