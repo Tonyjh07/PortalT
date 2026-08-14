@@ -4,10 +4,9 @@ PortalT：HomeLab 统一门户（Go 后端 + Nuxt 3 前端）。详见 `About.md
 
 ## 环境（Windows + PowerShell）
 
-- Go 不在 PATH：每次新会话跑 Go 命令前先 `$env:Path += ";C:\Program Files\Go\bin"`。
+- 用文件工具（Write/Edit）写含中文的文件；若必须用 PowerShell 写文件须 UTF-8 无 BOM（ `[System.IO.File]::WriteAllText` ），否则乱码。**尤其是使用脚本批量改写的情况**，写坏了只能从git恢复，该文件所有未提交修改都会丢失。
 - `rg` 未安装；命令行搜代码用 `Select-String`，搜文件用 glob/grep 工具。
 - GOPROXY 已持久化为 `goproxy.cn`（外网 registry 不通），勿改回。
-- 用文件工具（Write/Edit）写含中文的文件；若必须用 PowerShell 写文件须 UTF-8 无 BOM（`[System.IO.File]::WriteAllText`），否则乱码。
 
 ## 常用命令（均在对应子目录执行）
 
@@ -35,7 +34,7 @@ PortalT：HomeLab 统一门户（Go 后端 + Nuxt 3 前端）。详见 `About.md
 ## 前端（Nuxt 3）注意
 
 - `ssr: false`（纯 SPA）；Element Plus 暗色主题；组件全自动导入，**同名冲突**时须带目录前缀引用（如 `VmRemoteDesktop`，页面组件定义在 `frontend/components/`）。
-- dev 模式固定监听 `127.0.0.1:3000`，仅本机或 cloudflared 同机回连可访问；经 CF 隧道（生产 `portal.tonyjh07.dpdns.org`、开发演示 `demo.tonyjh07.dpdns.org`）访问时报 `Blocked request. This host is not allowed` 就到 `nuxt.config.ts` 的 `vite.server.allowedHosts` 加域名。
+- dev 模式固定监听 `127.0.0.1:3000`，仅本机或 cloudflared 同机回连可访问；经 CF 隧道（生产为 `portal.tonyjh07.dpdns.org`、开发演示 `demo.tonyjh07.dpdns.org`）访问时报 `Blocked request. This host is not allowed` 就到 `nuxt.config.ts` 的 `vite.server.allowedHosts` 加域名。
 - `/api` 走 nitro devProxy 到 8080；WS 升级经 `frontend/modules/wsProxy.ts`（httpxy，仅 dev，target 只取 origin 避免 `/api/api` 双重前缀）。生产部署不走此路径。
 - 修改 `nuxt.config.ts` 的 host/allowedHosts 后必须重启 dev server 才生效。
 - dev 全局 CSS 加载有两个上游 bug（Windows 畸形 URL + link/import 缓存冲突报 MIME 错），已用 patch-package 修补（`frontend/patches/`）；`?inline` 补丁**必须仅 dev 生效**，否则生产构建全局样式全丢；遇到 `Failed to load module script ... text/css` 先看 patch 是否还在（`npx patch-package --check`）。详见 `docs/conventions.md`。

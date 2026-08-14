@@ -48,8 +48,6 @@ curl -X POST http://127.0.0.1:8080/api/v1/auth/login \
 # {"code":200,"message":"success","data":{"access_token":"...","refresh_token":"...",...}}
 ```
 
-Windows 提示：Go 可能不在 PATH，先执行 `$env:Path += ";C:\Program Files\Go\bin"`。
-
 远程桌面演示（可选）：`docker compose up -d` 启动 guacd + VNC 演示容器，
 后端设 `GUACD_URL=127.0.0.1:4822` 后，示例 VM 即可直连桌面。
 
