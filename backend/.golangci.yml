@@ -1,0 +1,12 @@
+# golangci-lint v2 配置（CI 与本地共用；本地运行见 docs/build.md §6）
+# 只启用默认 linters 集：errcheck / govet / ineffassign / staticcheck / unused
+version: "2"
+
+linters:
+  default: standard
+  settings:
+    staticcheck:
+      # ST 系列为风格检查，与仓库既有约定冲突，豁免：
+      # ST1005 中文错误消息以专有名词（Caddy 等）开头；ST1003 PERM_* 常量 / ApiURL
+      # 字段为既有命名（重命名纯 churn）；ST1000/ST1021 包注释与注释格式不强制
+      checks: ["all", "-ST1000", "-ST1003", "-ST1005", "-ST1021"]

@@ -1,0 +1,160 @@
+# PortalT 持续集成：lint + 全量可行测试 + 构建校验（Docker 镜像仅构建不推送）
+# 说明：自动部署（CD）不启用——生产更新走 deploy/update.sh（见 docs/how-to-use.md §3.2）。
+# 各 job 的本地等价命令见 docs/build.md §6。
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+
+# 同分支新推送取消旧跑，节省额度
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: 后端 Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          working-directory: backend
+
+  backend:
+    name: 后端（构建/单测/vcsim/插件宿主集成/race）
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: 构建检查
+        run: go build ./...
+      - name: go vet
+        run: go vet ./...
+      - name: 单元测试（默认排除 esxi/integration tag）
+        run: go test ./... -count=1
+      - name: ESXi 适配器测试（vcsim 进程内模拟，无需真实环境）
+        run: go test -tags esxi ./internal/adapters/esxi/... -count=1
+      - name: 插件宿主集成测试（测试内自编 hello 插件并 spawn 验证）
+        run: go test -tags integration ./internal/pluginhost/... -count=1
+      - name: 竞态检测
+        run: go test -race ./... -count=1
+
+  backend-integration:
+    name: 后端集成测试（postgres 容器）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    # 凭据与 Makefile test-integration 默认值一致（docker-compose.yml 同）
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: portalt
+          POSTGRES_PASSWORD: securepassword
+          POSTGRES_DB: portalt
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U portalt -d portalt"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgres://portalt:securepassword@localhost:5432/portalt?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: 集成测试（sqlite 集成同跑；真实 ESXi 测试无凭据自动 skip）
+        run: go test -tags integration ./internal/adapters/... -count=1
+
+  frontend:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: 安装依赖（postinstall 自动应用 patch-package 补丁）
+        run: npm ci
+      - name: 构建
+        run: npm run build
+
+  plugins:
+    name: 插件构建（frpc-admin）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: 构建插件二进制（独立模块，replace 指向主模块，可捕获主模块 API 破坏）
+        run: CGO_ENABLED=0 go build ./cmd/frpc-admin
+        working-directory: backend/plugins/frpc-admin
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/plugins/frpc-admin/frontend/package-lock.json
+      - name: 构建插件前端（build 含 vue-tsc 类型检查）
+        run: npm ci && npm run build
+        working-directory: backend/plugins/frpc-admin/frontend
+
+  docker:
+    name: Docker 镜像构建（不推送）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [lint, backend, backend-integration, frontend, plugins]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: 构建后端镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: backend
+          push: false
+          tags: portalt/backend:ci
+      - name: 构建前端镜像
+        uses: docker/build-push-action@v7
+        with:
+          context: frontend
+          push: false
+          tags: portalt/frontend:ci

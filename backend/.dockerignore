@@ -1,0 +1,8 @@
+# 本地构建产物与无关文件（镜像内不需要，还会增大构建上下文）
+bin/
+*.md
+.env*
+Dockerfile
+.dockerignore
+.golangci.yml
+*_test.go
