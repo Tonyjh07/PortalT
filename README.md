@@ -120,5 +120,5 @@ docker-compose.yml  PostgreSQL / guacd / VNC 演示
   ESXi Host Client，Caddy 反代 iframe/控制台已通）
 - 🔄 插件重构 Phase 1-2：access 收敛（type 收敛 access/native、iframe/proxy 合并、
   Caddy 规则落盘交互、esxi-admin 迁移 access、/api/v1/platform），原生插件进程化 Phase 3 规划中
-- ✅ Phase 10 部署部分：一键安装/更新脚本（`deploy/install.sh` + `update.sh`，2026-08-07
-  生产实测通过；CI/CD workflow 尚未实施）
+- ✅ Phase 10 CI/CD：CI workflow + 构建文档 + 产物部署文档（2026-08-16
+  实施完成；生产部署仍走 deploy/update.sh）

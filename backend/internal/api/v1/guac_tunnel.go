@@ -111,13 +111,13 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 		response.Error(c, http.StatusBadGateway, response.CodeServerError, "连接 guacd 失败")
 		return
 	}
-	defer guacdConn.Close()
+	defer func() { _ = guacdConn.Close() }()
 
 	clientConn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		return // gin 已写入升级失败响应
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	// 服务端完成与 guacd 的协议握手（连接参数全部来自 VM metadata +
 	// 会话级质量模式 mode 的档位覆盖）
@@ -133,8 +133,8 @@ func (h *GuacdHandler) Proxy(c *gin.Context) {
 
 	done := make(chan struct{}, 2)
 	abort := func() {
-		guacdConn.Close()
-		clientConn.Close()
+		_ = guacdConn.Close()
+		_ = clientConn.Close()
 	}
 
 	// 两个转发 goroutine 都会写 clientConn，gorilla/websocket 不支持并发写

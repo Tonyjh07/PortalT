@@ -16,9 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -212,7 +210,7 @@ func (p *Provider) powerOp(id, op string) error {
 	if err != nil {
 		return fmt.Errorf("workstation: 电源操作 %s 请求失败: %w", op, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 		return fmt.Errorf("workstation: 电源操作 %s 失败 (HTTP %d): %s", op, resp.StatusCode, strings.TrimSpace(string(body)))
@@ -254,7 +252,7 @@ func (p *Provider) doJSON(method, path string, body io.Reader, out any) error {
 	if err != nil {
 		return fmt.Errorf("workstation: 请求 %s 失败: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized {
 		return fmt.Errorf("workstation: 认证失败 (HTTP 401)，请检查 VIRT_WS_USERNAME/PASSWORD 或重新运行 vmrest.exe -C")
 	}
@@ -374,18 +372,4 @@ func hostnameOr(fallback string) string {
 		return h
 	}
 	return fallback
-}
-
-// ensureDialOK 校验网络可达（供测试/启动探测使用）。
-func (p *Provider) ensureDialOK() error {
-	u, err := url.Parse(p.base)
-	if err != nil {
-		return err
-	}
-	conn, err := net.DialTimeout("tcp", u.Host, p.cfg.Timeout)
-	if err != nil {
-		return fmt.Errorf("workstation: 无法连接 %s: %w", u.Host, err)
-	}
-	_ = conn.Close()
-	return nil
 }

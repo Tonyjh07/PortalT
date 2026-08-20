@@ -7,7 +7,8 @@
 | 文档 | 内容 |
 |------|------|
 | [conventions.md](./conventions.md) | 开发规范：工具链、目录、Makefile、代码风格、测试、配置 |
-| [how-to-use.md](./how-to-use.md) | 构建与部署指南（Debian + ESXi）：§3 一键脚本部署（`deploy/install.sh` + `update.sh`）→ 手工构建 → systemd 部署 → 接入 ESXi → Caddy 反代 → 远程桌面 → 验证/排错 |
+| [how-to-use.md](./how-to-use.md) | 构建与部署指南（Debian + ESXi）：构建方式、Docker 镜像、一键脚本部署（`deploy/install.sh` + `update.sh`）、产物清单与部署布局、systemd 部署、接入 ESXi、Caddy 反代、远程桌面、验证/排错 |
+| [build.md](./build.md) | 构建指南：工具链版本、后端/前端/插件手工构建与交叉编译、Docker 镜像、CI 流水线（GitHub Actions job 结构与本地等价命令）、golangci-lint 本地运行 |
 | [interfaces.md](./interfaces.md) | 接口文档：HTTP 接口、错误码、领域模型 JSON 契约 |
 | [plugins.md](./plugins.md) | 插件开发指南：access / native 两型、access 与 Caddy 交互、manifest 契约 |
 | [access-plugin-admin.md](./access-plugin-admin.md) | access 插件管理手册：字段/校验、配置编写（iframe/Caddy 规则/端点）、管理 API 与界面操作、排查 |

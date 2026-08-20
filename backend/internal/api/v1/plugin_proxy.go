@@ -93,7 +93,7 @@ func (h *PluginProxyHandler) Proxy(c *gin.Context) {
 		response.Error(c, http.StatusBadGateway, response.CodeServerError, "插件服务不可达: "+plugin.Name)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// 透传插件响应（状态码 + 头 + body），不做 envelope 包装，便于脚本工具直接使用
 	for k := range resp.Header {

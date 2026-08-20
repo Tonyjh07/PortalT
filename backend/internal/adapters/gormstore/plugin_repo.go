@@ -3,6 +3,7 @@ package gormstore
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -65,7 +66,7 @@ func (m *pluginModel) ToDomain() (*domain.Plugin, error) {
 func (m *pluginModel) FromDomain(p *domain.Plugin) error {
 	b, err := json.Marshal(p.Endpoints)
 	if err != nil {
-		return err
+		return fmt.Errorf("序列化插件 endpoints: %w", err)
 	}
 	m.ID = p.ID
 	m.Name = p.Name
@@ -100,7 +101,9 @@ func (r *PluginRepository) Save(p *domain.Plugin) error {
 		return ports.ErrInvalidArgument
 	}
 	var m pluginModel
-	m.FromDomain(p)
+	if err := m.FromDomain(p); err != nil {
+		return err
+	}
 	return r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"name", "icon", "route", "type", "iframe_url", "api_url", "endpoints", "caddy_rules", "permission", "sort_order", "is_active", "status", "manifest_json", "updated_at"}),

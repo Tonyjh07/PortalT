@@ -35,7 +35,7 @@ func newUpstreamEcho(t *testing.T) *upstreamEcho {
 		up := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 		conn, err := up.Upgrade(w, r, nil)
 		require.NoError(u.t, err)
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		mt, msg, err := conn.ReadMessage()
 		require.NoError(u.t, err)
@@ -77,10 +77,10 @@ func TestGuac_Proxy_EchoRoundtrip(t *testing.T) {
 		"Authorization": {"Bearer t"},
 	})
 	require.NoError(t, err, "连接代理失败: %v", resp)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	require.NoError(t, conn.WriteMessage(websocket.TextMessage, []byte("ping")))
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	_, msg, err := conn.ReadMessage()
 	require.NoError(t, err)
 	assert.Equal(t, "ping", string(msg))
@@ -100,7 +100,7 @@ func TestGuac_Proxy_NotConfigured(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
 }
 
@@ -110,7 +110,7 @@ func TestGuac_Proxy_Unauthenticated(t *testing.T) {
 
 	resp, err := http.Get(proxy.URL + "/guac/ws/vm-1")
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 }
 

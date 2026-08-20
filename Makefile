@@ -5,7 +5,7 @@
         test test-unit test-domain test-repo test-virt test-sqlite test-integration test-esxi test-auth \
         test-api test-e2e \
         build build-backend build-frontend \
-        docker-build docker-build-backend docker-build-caddy docker-build-frontend \
+        docker-build docker-build-backend docker-build-frontend \
         docker-push up down logs clean
 
 GO       ?= go
@@ -141,22 +141,20 @@ build-frontend:
 	@echo "前端构建完成: $(FRONTEND_DIR)/.output"
 
 # ------------------------------------------------------------------
-# Docker 构建与推送 (镜像推送在 Phase 10 启用)
+# Docker 构建与推送（生产部署走 deploy/install.sh 的 systemd + 二进制方案，
+# 镜像用于容器化运行与 CI 构建校验；生产 Caddy 为系统服务，不打包镜像）
 # ------------------------------------------------------------------
-docker-build: docker-build-backend docker-build-caddy
+docker-build: docker-build-backend docker-build-frontend
 	@echo "Docker 镜像构建完成"
 
 docker-build-backend:
-	$(DOCKER) build -t portalt/backend:$(VERSION) -f $(BACKEND_DIR)/Dockerfile $(BACKEND_DIR)
-
-docker-build-caddy:
-	$(DOCKER) build -t portalt/caddy:$(VERSION) -f caddy/Dockerfile caddy
+	$(DOCKER) build -t portalt/backend:$(VERSION) $(BACKEND_DIR)
 
 docker-build-frontend:
-	$(DOCKER) build -t portalt/frontend:$(VERSION) -f $(FRONTEND_DIR)/Dockerfile $(FRONTEND_DIR)
+	$(DOCKER) build -t portalt/frontend:$(VERSION) $(FRONTEND_DIR)
 
 docker-push:
-	@echo "docker-push 将在 Phase 10 (CI/CD) 启用"
+	@echo "docker-push 暂不启用（生产部署走 deploy/update.sh，镜像不推 registry）"
 
 # ------------------------------------------------------------------
 # Docker Compose 便捷命令

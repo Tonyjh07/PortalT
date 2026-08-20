@@ -141,7 +141,7 @@ func TestAuthRequired_QueryToken(t *testing.T) {
 
 func TestAuthRequired_QueryToken_GuacamoleAppendedData(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	r, w := setupGin()
+	r, _ := setupGin()
 
 	tm := &stubTokenManager{user: &domain.User{ID: "u-1", Username: "bob", Role: domain.RoleUser}}
 	r.GET("/ws", AuthRequired(tm), func(c *gin.Context) {
@@ -156,7 +156,7 @@ func TestAuthRequired_QueryToken_GuacamoleAppendedData(t *testing.T) {
 		"/ws?token=valid-token?undefined",
 		"/ws?token=valid-token&connect=abc",
 	} {
-		w = httptest.NewRecorder()
+		w := httptest.NewRecorder()
 		r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, q, nil))
 		assert.Equal(t, http.StatusOK, w.Code, "query=%s", q)
 	}

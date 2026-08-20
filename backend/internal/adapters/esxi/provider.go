@@ -207,11 +207,11 @@ func (p *Provider) ensureClient(ctx context.Context) (*govmomi.Client, error) {
 	// 过期后所有请求持续失败（govmomi 默认不会自动恢复已过期会话）。
 	// 注意：govmomi.NewClient 已内部完成 Login，KeepAlive 的 goroutine 不会随
 	// Login 自动启动，须显式 Start()（官方即用于"登录已发生"的缓存会话场景）。
-	keepAlive := session.KeepAlive(c.Client.RoundTripper, keepAliveInterval)
+	keepAlive := session.KeepAlive(c.RoundTripper, keepAliveInterval)
 	if h, ok := keepAlive.(*keepalive.HandlerSOAP); ok {
 		h.Start()
 	}
-	c.Client.RoundTripper = keepAlive
+	c.RoundTripper = keepAlive
 	p.client = c
 	return c, nil
 }

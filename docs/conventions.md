@@ -53,9 +53,9 @@ go env -w GOPROXY=https://goproxy.cn,direct
 | `make test-auth` | 认证适配器 + API 层测试（登录/刷新/中间件） | ✅ 通过 |
 | `make test-race` | 全部单测 + 竞态检测（需 MinGW） | ✅ 通过 |
 | `make test-integration` | 全部适配器集成测试（SQLite 免服务；PostgreSQL 需 `docker compose up -d postgres`） | ✅ 通过 |
-| `make test` | 汇总测试（test-domain + test-repo + test-api） | ⏳ 依赖后续阶段 |
+| `make test` | 汇总测试（test-domain + test-repo + test-virt + test-api） | ✅ 通过 |
 | `make build` | 构建后端二进制 `backend/bin/portalt.exe` | ✅ 可用 |
-| `make docker-build` | 构建 Docker 镜像 | ⏳ 依赖 Dockerfile |
+| `make docker-build` | 构建 backend + frontend Docker 镜像 | ✅ 可用 |
 | `make up/down/logs` | docker compose 便捷命令 | ✅ 可用 |
 
 ## 代码规范（Go）
@@ -119,6 +119,23 @@ go env -w GOPROXY=https://goproxy.cn,direct
 - API 端到端测试：`internal/api/auth_api_test.go`（完整路由 + 真实认证链），置于 `api` 包以避免 v1↔api 测试循环依赖
 - 中间件测试：可编程 TokenManager 桩（`internal/api/middleware/auth_test.go`）
 - `make test-auth` 覆盖以上全部；登录成功/失败/刷新/me/错误码均断言
+
+## CI（GitHub Actions）
+
+配置：`.github/workflows/ci.yml`。
+
+| Job | 内容 | 本地等价 |
+|-----|------|---------|
+| lint | golangci-lint | `cd backend && golangci-lint run` |
+| backend | build + vet + 单测 + vcsim + pluginhost 集成 + race | 见 `docs/build.md` §6 |
+| backend-integration | postgres 服务容器 + adapters 集成 | `TEST_DATABASE_URL=postgres://... go test -tags integration ./internal/adapters/...` |
+| frontend | npm ci + build | `cd frontend && npm ci && npm run build` |
+| plugins | frpc-admin 二进制 + 前端 | `cd backend/plugins/frpc-admin && CGO_ENABLED=0 go build ./cmd/frpc-admin` |
+| docker | buildx 构建镜像（不推送） | `make docker-build` |
+
+触发：push main（paths-ignore `*.md`/`docs/**`）+ pull_request；concurrency 取消同分支旧跑。
+CI 不设 `GOPROXY=goproxy.cn`（runner 在海外，默认源可达；该约定仅本机适用）。
+golangci-lint 本地运行：`cd backend && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest run`。
 
 ## Docker 环境备注
 

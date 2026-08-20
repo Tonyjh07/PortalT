@@ -24,6 +24,7 @@ frontend/dist/
 log.json
 .agents/
 skills-lock.json
+.zcode/
 
 # IDE / 系统
 .idea/

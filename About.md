@@ -509,32 +509,37 @@ VALUES ('Home Assistant', 'mdi:home', '/ha', 'https://ha.local', 'view_ha', 1);
 ---
 
 ### Phase 10：CI/CD与部署
-**目标**：自动化构建、测试、部署
+**目标**：自动化构建与测试（自动部署不做——生产更新走 `deploy/update.sh`）
 
 **验证标准**：
 ```bash
 git push main
-# GitHub Actions自动触发 → 构建镜像 → 推送到GHCR → SSH部署到服务器
+# GitHub Actions 自动触发 → lint + 全量测试 + 构建校验（Docker 镜像仅构建不推送）
 ```
 
-**AI生成任务**：
+**已实施**：
 1. `.github/workflows/ci.yml`：
-   - Lint代码（golangci-lint, eslint）
-   - 运行单元测试 + 集成测试
-   - 构建Docker镜像（不推送）
-2. `.github/workflows/cd.yml`：
-   - 触发条件：`push tags v*` 或 `push main`
-   - 构建并推送镜像到 `ghcr.io/${{ github.repository }}`
-   - SSH执行远程部署脚本
-3. `deploy/install.sh` / `deploy/update.sh` - 服务器部署脚本（一键安装/更新，见 `docs/how-to-use.md` §3）：
-   ```bash
-   bash deploy/install.sh
-   bash deploy/update.sh
-   ```
-4. `Makefile` 增加命令：
-   - `make build` → 构建所有服务
-   - `make docker-build` → 构建镜像
-   - `make docker-push` → 推送镜像
+   - **lint** job：golangci-lint（默认 linters 集，配置 `backend/.golangci.yml`）
+   - **backend** job：build + vet + 单测 + ESXi vcsim + 插件宿主集成（自编 hello 插件 spawn）+ race 检测
+   - **backend-integration** job：postgres 服务容器 + adapters 集成测试（真实 ESXi 无凭据自动 skip）
+   - **frontend** job：npm ci + build
+   - **plugins** job：frpc-admin 二进制 + 前端构建（含 vue-tsc 类型检查）
+   - **docker** job（needs 前述全部）：buildx 构建后端/前端镜像（不推送）
+   - 触发：push main + pull_request；paths-ignore `*.md`/`docs/**`；concurrency 取消同分支旧跑
+2. `backend/Dockerfile` + `backend/.dockerignore`：多阶段构建（golang:1.26-alpine → alpine:3）
+3. `backend/.golangci.yml`：默认 linters 集，ST 系风格检查按仓库惯例豁免
+4. Makefile 修复：`docker-build` 组成调整为 backend + frontend（删除引用不存在文件的 caddy target）
+5. `docs/build.md`：构建文档（工具链版本、手工/交叉编译/Docker/CI job 结构）
+6. `docs/how-to-use.md` §10：产物清单与部署布局（产物→去向对照、目录树、插件投放、备份与回滚）
+
+**不做**（与原规划差异说明）：
+- CD 自动部署（`.github/workflows/cd.yml`）：生产部署走 `deploy/update.sh`（服务器上 git pull + 本地编译 + systemd），不做自动推送/SSH 部署
+- GHCR 镜像推送：生产不使用容器镜像部署，Docker 镜像仅用于 CI 构建校验与容器化运行场景
+- 前端 eslint：前端无 lint/test 脚本配置，暂不新增
+
+**保留（已实施）**：
+- `deploy/install.sh` / `deploy/update.sh` 服务器部署脚本（一键安装/更新，见 `docs/how-to-use.md` §3）
+- `make build`、`make docker-build`（可用，`make docker-push` 暂不启用）
 
 ---
 
@@ -725,7 +730,7 @@ DOMAIN=portal.yourlab.com
 | ESXi 反代接入门户鉴权（Caddy forward_auth） | ✅ 完成 | 2026-08-09 | ①后端新增鉴权闸口 `GET /api/v1/auth/gate?perm=<权限>`：令牌按 Authorization/`?token=`/`access_token` cookie 提取，失效回退 `refresh_token`（双令牌续期），RoleLoader 角色矩阵校验（`esxi-admin:use`），未登录 401 / 无权限 403（中文 HTML 提示页）；`NewAuthHandler` 注入 RoleLoader、公开组注册 ②Caddy `forward_auth` 接入：`DefaultESXIAdminCaddyRules` 每个 handle 加闸口回调（旧无鉴权默认 `DefaultESXIAdminCaddyRulesV1` + seed 自动升级迁移，仅精确匹配旧默认才覆盖、保留管理员自定义）；内置 Caddyfile 精简掉全部 ESXi handle，ESXi 规则仅由插件提供（停用插件即移除规则、访问收回）③前端插件页每 5 分钟静默续期 access cookie（`pages/plugins/[...slug].vue`）④`gate_test.go` 12 用例（令牌来源/权限/矩阵/续期回退/缺参）+ 路由级 3 用例（含 cookie 路径）+ caddy_test 断言 + Caddy 组合配置 docker validate 通过 + `go test ./... -count=1` 全绿 + `npm run build` 通过 |
 | Caddy 手动重载（插件管理页） | ✅ 完成 | 2026-08-09 | ①后端 `POST /api/v1/plugins/caddy-reload`（`plugin:manage`）：以 DB 为准全量对齐 access 插件 Caddy 规则并 reload（补写未落盘、清理孤儿规则文件），供规则保存后 reload 失败/手工改盘后一次性修复；`ports.CaddyApplier` 新增 `SyncAll`（原 `WriteAll` 改名复用，启动引导同路径）②前端插件管理页头部新增"重载 Caddy"按钮（成功/告警提示，`caddy_applied` 状态随之刷新）③`plugin_test.go` 新增 3 用例 + `go test ./... -count=1` 全绿 + `npm run build` 通过 |
 | ESXi 反代补 /ha-nfc NFC 端点（导出 OVF 修复） | ✅ 完成 | 2026-08-11 | 修复经 Caddy 反代后 Host Client 导出 OVF 报 `Required property not defined: size`：导出时对 `/ha-nfc/<session>/<file>` 发 HEAD 读取各文件 Content-Length，但该路径缺代理、落到门户 SPA 兜底（text/html）读不到 size；新增 `handle /ha-nfc/*` 反代块（带鉴权闸口），原默认改名 `DefaultESXIAdminCaddyRulesV2`（缺 ha-nfc）作历史值，seed 迁移对归一化等于 V1/V2 的旧默认统一升级；生产经 API 应用并浏览器实测导出成功；`cmd/server` 新增 seed 迁移测试 + `go test ./... -count=1` 全绿 |
-| Phase 10: CI/CD与部署 | 🔄 部分完成（部署脚本） | 2026-08-07 | `deploy/install.sh` + `deploy/update.sh` 一键安装/更新（仅依赖 bash + 包管理器，以生产为标准：systemd + Caddy 8808 + Docker 容器 guacd/postgres + /opt/portalt 布局）；`update.sh` 增强：无新提交不更新（`--force` 强制）、`--rollback [n]` 回滚到前 n 个版本（最多 2，来源为更新时自动备份的二进制/前端产物/插件目录）、分段跳过参数（`--skip-pull/backend/frontend/plugins/restart/health`）、Caddyfile 差异自动同步（校验失败回滚）、编译走 goproxy.cn 镜像、脚本自更新；生产服务器实测通过（安装/更新/健康检查/失败回滚）；CI/CD workflow（GitHub Actions）尚未实施 |
+| Phase 10: CI/CD与部署 | ✅ 完成 | 2026-08-16 | ①CI workflow（`.github/workflows/ci.yml`）：6 job（lint/backend/backend-integration/frontend/plugins/docker），触发 push main + pull_request，concurrency 取消同分支旧跑②`backend/Dockerfile` 多阶段构建（golang:1.26-alpine → alpine:3）+ `.dockerignore`③`backend/.golangci.yml`（默认 linters，ST 系按仓库惯例豁免）+ 全量 errcheck 修复（`defer Close()` → `_ = Close()`、`pluginModel.FromDomain` 错误传播等 30 处）④Makefile docker 区修复（删除不存在文件的 caddy target，docker-build 调整为 backend+frontend）⑤`docs/build.md` 构建文档（工具链/手工构建/交叉编译/Docker/CI job 结构）⑥`docs/how-to-use.md` §10 产物清单与部署布局（产物→去向对照、/opt/portalt 目录树、systemd 单元差异、插件投放约定、update.sh 备份与回滚命名）⑦不做 CD 自动部署/GHCR 推送（生产走 update.sh systemd 二进制方案） |
 | frpc-admin 插件（后端核心） | ✅ 完成 | 2026-08-10 | 仓库内 native 插件 `backend/plugins/frpc-admin/`（独立 go.mod，非 submodule）：SSH 连接配置持久化（脱敏）、frp 版本/配置路径探测、frpc 配置 INI/TOML 双格式结构化 + 原文双模式编辑、保存=备份+语法检查+应用+重启+失败自动回滚；新增权限字典项 `frpc-admin:manage`（默认仅 admin 持有，manifest 声明）；`go build/vet` 干净 + 插件与后端 `go test ./... -count=1` 全绿；待做：前端 SPA、Makefile/README、投放与冒烟 |
 | frpc-admin 增强（日志 + 备份管理） | ✅ 完成 | 2026-08-12 | 插件新增 frpc 日志查看（来源自动检测：配置声明真实日志路径 TOML `log.to`/INI `log_file` → `tail -n`，否则 `journalctl -u <unit> --no-pager`，unit 从重启命令提取默认 frpc；行数 50-2000 钳制）+ 历史备份查看与恢复（列表倒序、内容查看、恢复前自动备份当前配置、失败回滚，`GET /api/logs`、`GET /api/backups`、`GET/POST /api/backups/{ts}`）；前端 SPA 补齐（action-bar「日志」「历史备份」入口 + LogsDialog 行数选择/刷新 + BackupsDialog 表格/预览/恢复确认，构建产物提交 `static/`）；`go build/vet` 干净 + 插件 `go test ./... -count=1` 全绿 + `npm run build` 通过；待做：投放与冒烟 |
 

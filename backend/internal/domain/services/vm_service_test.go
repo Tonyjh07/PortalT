@@ -281,18 +281,6 @@ func TestVMService_ListVMs(t *testing.T) {
 	assert.Equal(t, "vm-1", vms[0].ID)
 }
 
-// setStatus 修改桩提供者中 VM 的状态并回写内存仓储。
-func (s *stubProvider) setStatus(t *testing.T, id string, status domain.VMStatus) {
-	t.Helper()
-	for _, vm := range s.vms {
-		if vm.ID == id {
-			vm.Status = status
-			return
-		}
-	}
-	t.Fatalf("provider 中不存在 VM %q", id)
-}
-
 func TestVMService_GetVM(t *testing.T) {
 	svc, repo, _ := newTestService()
 	require.NoError(t, repo.Save(&domain.VM{ID: "vm-1", Name: "web"}))

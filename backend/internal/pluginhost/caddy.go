@@ -363,9 +363,9 @@ func (m *CaddyManager) validateCaddy(rules string) error {
 	if err != nil {
 		return nil
 	}
-	defer os.Remove(tmp.Name())
+	defer func() { _ = os.Remove(tmp.Name()) }()
 	if _, err := tmp.WriteString(":0 {\n" + rules + "\n}"); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return nil
 	}
 	if err := tmp.Close(); err != nil {

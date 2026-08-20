@@ -55,7 +55,7 @@ func (h *GuacHandler) Proxy(c *gin.Context) {
 	if err != nil {
 		return // gin 已写入升级失败响应
 	}
-	defer clientConn.Close()
+	defer func() { _ = clientConn.Close() }()
 
 	target, err := url.Parse(h.guacWSURL)
 	if err != nil {
@@ -72,7 +72,7 @@ func (h *GuacHandler) Proxy(c *gin.Context) {
 		response.Error(c, http.StatusBadGateway, response.CodeServerError, "连接 Guacamole 失败")
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
 	// 双向拷贝，任一侧关闭即断开
 	done := make(chan struct{}, 2)

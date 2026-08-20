@@ -43,7 +43,7 @@ func newMockGuacd(t *testing.T) *mockGuacd {
 	require.NoError(t, err)
 	m.listener = ln
 	go m.serve()
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() { _ = ln.Close() })
 	return m
 }
 
@@ -60,7 +60,7 @@ func (m *mockGuacd) serve() {
 }
 
 func (m *mockGuacd) handle(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	stream := guac.NewStream(conn, 5*time.Second)
 
 	sel, err := guac.ReadOne(stream)
@@ -156,7 +156,7 @@ func TestGuacd_Authorization_Unauthorized_NotFound(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 
 	// 已授权 VM：授权通过后走到 getVM（这里返回 ErrNotFound → 404），与未授权表现一致
@@ -165,7 +165,7 @@ func TestGuacd_Authorization_Unauthorized_NotFound(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	resp, err = http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -188,7 +188,7 @@ func dialTunnelQuery(t *testing.T, server *httptest.Server, vmID, query string) 
 		"Authorization": {"Bearer t"},
 	})
 	require.NoError(t, err, "连接隧道失败: %v", resp)
-	t.Cleanup(func() { conn.Close() })
+	t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
 
@@ -208,22 +208,10 @@ func testVM() *domain.VM {
 	}
 }
 
-// expectInstruction 读取下一条 WS 指令并按 opcode 断言，返回参数。
-func expectInstruction(t *testing.T, conn *websocket.Conn, opcode string) []string {
-	t.Helper()
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	_, raw, err := conn.ReadMessage()
-	require.NoError(t, err)
-	ins, err := guac.Parse(raw)
-	require.NoError(t, err)
-	assert.Equal(t, opcode, ins.Opcode)
-	return ins.Args
-}
-
 // readRaw 读取下一条 WS 消息原文（断言辅助）。
 func readRaw(t *testing.T, conn *websocket.Conn) []byte {
 	t.Helper()
-	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	_, raw, err := conn.ReadMessage()
 	require.NoError(t, err)
 	return raw
@@ -381,7 +369,7 @@ func TestGuacd_Tunnel_VMNotFound(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -394,7 +382,7 @@ func TestGuacd_Tunnel_GuacdDown(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer t")
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	assert.Equal(t, http.StatusBadGateway, resp.StatusCode)
 }
 

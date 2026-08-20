@@ -288,7 +288,91 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 
 详细参数与排错见 [remote-desktop.md](./remote-desktop.md)。
 
-## 10. 验证清单（部署完成）
+## 10. 产物清单与部署布局
+
+以下为 `install.sh` / `update.sh` 使用的标准部署布局（默认 `/opt/portalt`，
+可通过 install.sh 交互配置修改）。
+
+### 10.1 产物清单
+
+| 源 | 部署目标 | 说明 |
+|----|---------|------|
+| `backend/bin/portalt-server` | `/opt/portalt/portalt-server` | 后端单二进制，755 |
+| `frontend/.output/` | `/opt/portalt/frontend/.output/` | Nuxt SPA 产物（整目录拷贝） |
+| `backend/migrations/` | `/opt/portalt/migrations/` | SQL 迁移文件（`DB_MIGRATIONS_DIR`） |
+| `backend/plugins/<id>/plugin` | `/opt/portalt/plugins/<id>/plugin` | 官方 native 插件二进制 |
+| `backend/plugins/<id>/manifest.json` | `/opt/portalt/plugins/<id>/manifest.json` | 插件清单（宿主按此扫描） |
+| `backend/plugins/<id>/static/` | `/opt/portalt/plugins/<id>/static/` | 插件内置前端 SPA（如有） |
+| `caddy/Caddyfile` | `/etc/caddy/Caddyfile` | Caddy 反代配置（install.sh 首次部署，update.sh 差异同步） |
+
+> 构建细节见 [build.md](./build.md)。
+
+### 10.2 部署目录树
+
+```
+/opt/portalt/                        # DEPLOY_DIR（install.sh 可自定义）
+├── portalt-server                   # 后端二进制（由 systemd 启动）
+├── portalt.env                      # 环境配置（600 权限，仅 root 可读）
+├── .deployed                        # 部署标记（DEPLOY_DIR=... REPO_DIR=...）
+├── frontend/
+│   └── .output/                     # Nuxt SPA 产物（node server 运行）
+├── migrations/                      # SQL 迁移文件（启动时自动执行）
+├── plugins/                         # PLUGINS_DIR（native 插件运行时目录）
+│   ├── frpc-admin/
+│   │   ├── plugin                   # 插件二进制
+│   │   ├── manifest.json            # 清单
+│   │   └── static/                  # 内置前端 SPA
+│   └── <用户自定义插件>/
+├── logs/                            # 日志目录（备用）
+└── data/                            # SQLite 数据库文件（DB_DSN 指向此目录时）
+```
+
+### 10.3 systemd 单元
+
+由 `install.sh` 生成并注册（§6 有手工版本说明），与 §6 的区别：
+- 后端单元始终带 `After=docker.service`、`Wants=docker.service`（`Wants` 为软依赖，
+  docker 未装时仅告警不影响启动）；postgres 模式额外加等待数据库就绪的
+  `ExecStartPre`（`docker exec portalt-postgres pg_isready`）；
+- 前端单元设 `HOST=127.0.0.1`（仅本机可达，由 Caddy 反代）；
+- Caddy 使用系统包自带单元或生成独立单元，drop-in 注入 `CADDY_PORT`/`ESXI_UPSTREAM`。
+
+### 10.4 用户自定义插件投放
+
+除 `install.sh` / `update.sh` 循环构建的**官方插件**外，用户可直接将预编译
+产物投放 `PLUGINS_DIR`（`/opt/portalt/plugins/`）：
+
+1. 创建子目录 `PLUGINS_DIR/<插件ID>/`；
+2. 放入 `plugin`（二进制）、`manifest.json`（必需，宿主按此扫描发现插件）；
+3. 可选放入 `static/`（内置前端 SPA）；
+4. 后端启动或运行期间（fsnotify 热加载）自动发现并加载。
+
+详细 manifest 契约与开发指南见 [plugins.md](./plugins.md)。
+
+### 10.5 update.sh 备份与回滚
+
+每次 `update.sh` 更新前自动备份，失败时自动回滚。备份命名与轮转规则如下表。
+
+| 备份项 | 命名格式 | 回滚恢复目标 |
+|--------|---------|------------|
+| 后端二进制 | `portalt-server.bak.YYYYMMDDHHMMSS` | `/opt/portalt/portalt-server` |
+| 前端产物 | `frontend/.output.bak.YYYYMMDDHHMMSS` | `/opt/portalt/frontend/.output/`（目录） |
+| 插件目录 | `plugins.bak.YYYYMMDDHHMMSS` | `/opt/portalt/plugins/`（目录） |
+| Caddyfile | `/etc/caddy/Caddyfile.bak.YYYYMMDDHHMMSS` | `/etc/caddy/Caddyfile` |
+
+> 前三项（二进制/前端/插件）每次更新后保留最近 2 份，旧份自动清理；
+> **Caddyfile 备份不参与轮转**——仅在 `caddy validate` 失败时用于回滚，成功路径下
+> 每次同步均新增一份（建议定期手工清理 `/etc/caddy/Caddyfile.bak.*`）。
+
+回滚用法：
+
+```bash
+bash deploy/update.sh --rollback        # 回滚到上一版本
+bash deploy/update.sh --rollback 2      # 回滚两个版本（最多 2）
+```
+
+回滚前会把当前版本备份（可用 `--rollback 1` 撤销本次回滚），详见 `--help`。
+
+## 11. 验证清单（部署完成）
 
 | 项 | 方法 |
 |----|------|
@@ -299,7 +383,7 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 | ESXi 管理界面 | esxi-admin 插件页：加载、登录、VM 控制台可打开 |
 | 远程桌面（可选） | VM 详情页「远程桌面」连上并渲染画面 |
 
-## 11. 常见问题
+## 12. 常见问题
 
 | 现象 | 处理 |
 |------|------|
@@ -311,7 +395,7 @@ systemd 单元避免 admin 端口冲突：`systemctl stop caddy`。）
 | 远程桌面 WAITING | guacd 是否运行；VM metadata `guac.*` 是否指向可达目标（见 §9） |
 | 构建下载超时 | Go：`go env -w GOPROXY=https://goproxy.cn,direct`；npm：配置镜像 registry |
 
-## 12. 测试（开发/交付前）
+## 13. 测试（开发/交付前）
 
 ```bash
 cd backend && go test ./... -count=1     # 单元+仓储+API 全量（首跑偏慢属正常）

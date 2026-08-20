@@ -93,7 +93,7 @@ func appliedVersions(db *gorm.DB) (map[string]bool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query schema_migrations: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var v string
 		if err := rows.Scan(&v); err != nil {

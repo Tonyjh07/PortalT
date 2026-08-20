@@ -30,7 +30,7 @@ func (m *Manager) watch(ctx context.Context) {
 		m.logf("fsnotify 初始化失败: %v", err)
 		return
 	}
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 
 	if err := watcher.Add(m.dir); err != nil {
 		m.logf("监听插件目录失败 %s: %v", m.dir, err)
