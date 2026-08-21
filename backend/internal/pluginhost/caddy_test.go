@@ -43,13 +43,13 @@ func TestCaddyManager_ApplyValidatesCaddy(t *testing.T) {
 
 	// 校验通过 → 落盘
 	t.Setenv("PORTALT_FAKE_CADDY_EXIT", "0")
-	require.NoError(t, m.Apply("demo", "handle /x/* { respond 200 }"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n\trespond 200\n}"))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	require.NoError(t, err)
 
 	// 校验失败 → 报错且不落盘
 	t.Setenv("PORTALT_FAKE_CADDY_EXIT", "1")
-	err = m.Apply("bad", "handle /x/* { syntax error")
+	err = m.Apply("bad", "handle /x/* {\n\tsyntax error")
 	require.Error(t, err)
 	_, err = os.Stat(filepath.Join(dir, "bad.caddy"))
 	assert.True(t, os.IsNotExist(err))
@@ -64,7 +64,7 @@ func TestCaddyManager_ApplySkipsValidateWhenEnvPlaceholder(t *testing.T) {
 
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "")
-	require.NoError(t, m.Apply("demo", "handle /x/* { reverse_proxy {env.ESXI_UPSTREAM}:443 }"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n\treverse_proxy {env.ESXI_UPSTREAM}:443\n}"))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	require.NoError(t, err)
 }
@@ -74,7 +74,7 @@ func TestCaddyManager_ApplySkipsValidateWithoutCaddy(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "")
-	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n}"))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	require.NoError(t, err)
 }
@@ -82,16 +82,16 @@ func TestCaddyManager_ApplySkipsValidateWithoutCaddy(t *testing.T) {
 func TestCaddyManager_ApplyWritesFile(t *testing.T) {
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "")
-	require.NoError(t, m.Apply("demo", "handle /x/* { respond 200 }"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n\trespond 200\n}"))
 	data, err := os.ReadFile(filepath.Join(dir, "demo.caddy"))
 	require.NoError(t, err)
-	assert.Equal(t, "handle /x/* { respond 200 }", string(data))
+	assert.Equal(t, "handle /x/* {\n\trespond 200\n}", string(data))
 }
 
 func TestCaddyManager_ApplyEmptyRemoves(t *testing.T) {
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "")
-	require.NoError(t, m.Apply("demo", "handle /x/* { respond 200 }"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n\trespond 200\n}"))
 	require.NoError(t, m.Apply("demo", ""))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	assert.True(t, os.IsNotExist(err))
@@ -100,7 +100,7 @@ func TestCaddyManager_ApplyEmptyRemoves(t *testing.T) {
 func TestCaddyManager_Remove(t *testing.T) {
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "")
-	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n}"))
 	require.NoError(t, m.Remove("demo"))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	assert.True(t, os.IsNotExist(err))
@@ -114,18 +114,18 @@ func TestCaddyManager_SyncAllAligns(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "orphan.caddy"), []byte("x"), 0o644))
 	m := NewCaddyManager(dir, "")
 	plugins := []*domain.Plugin{
-		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {}"},
+		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {\n}"},
 		{ID: "b", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: ""},
-		{ID: "c", Type: domain.PluginTypeNative, IsActive: true, CaddyRules: "handle /c/* {}"},
-		{ID: "d", Type: domain.PluginTypeAccess, IsActive: false, CaddyRules: "handle /d/* {}"},
+		{ID: "c", Type: domain.PluginTypeNative, IsActive: true, CaddyRules: "handle /c/* {\n}"},
+		{ID: "d", Type: domain.PluginTypeAccess, IsActive: false, CaddyRules: "handle /d/* {\n}"},
 	}
 	require.NoError(t, m.SyncAll(plugins))
 
 	cases := map[string]bool{
-		"a.caddy":     true,
-		"b.caddy":     false,
-		"c.caddy":     false,
-		"d.caddy":     false,
+		"a.caddy":      true,
+		"b.caddy":      false,
+		"c.caddy":      false,
+		"d.caddy":      false,
 		"orphan.caddy": false,
 	}
 	for name, want := range cases {
@@ -142,11 +142,11 @@ func TestCaddyManager_SyncAllPartialFailureKeepsOldFile(t *testing.T) {
 	// 插件 e 校验失败：仅跳过自身并保留其旧规则文件，其余插件正常对齐，
 	// 成功写入/清理仍走 Reload（reloadCmd 为空时 Reload 为 no-op，不依赖 sh）
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "e.caddy"), []byte("handle /e/* {}"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "e.caddy"), []byte("handle /e/* {\n}"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "orphan.caddy"), []byte("x"), 0o644))
 	m := NewCaddyManager(dir, "")
 	plugins := []*domain.Plugin{
-		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {}"},
+		{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "handle /a/* {\n}"},
 		{ID: "e", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "bad-rules" /* 校验失败 */},
 	}
 	err := m.SyncAll(plugins)
@@ -179,7 +179,7 @@ func TestCaddyManager_ApplyWriteOnly(t *testing.T) {
 	// Apply 仅落盘，不触发 reload：reload 命令配置为必然失败也不报错
 	dir := t.TempDir()
 	m := NewCaddyManager(dir, "false")
-	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n}"))
 	_, err := os.Stat(filepath.Join(dir, "demo.caddy"))
 	assert.NoError(t, err)
 }
@@ -196,7 +196,7 @@ func TestCaddyManager_EmptyRulesDirNoOp(t *testing.T) {
 	m := NewCaddyManager("", "")
 	require.False(t, m.Enabled(), "未配置规则目录时 Enabled 应为 false")
 	require.False(t, m.ReloadEnabled(), "未配置 reload 命令时 ReloadEnabled 应为 false")
-	require.NoError(t, m.Apply("demo", "handle /x/* {}"))
+	require.NoError(t, m.Apply("demo", "handle /x/* {\n}"))
 	require.NoError(t, m.Reload())
 	require.NoError(t, m.Remove("demo"))
 	require.NoError(t, m.SyncAll([]*domain.Plugin{{ID: "a", Type: domain.PluginTypeAccess, IsActive: true, CaddyRules: "x"}}))
@@ -228,10 +228,19 @@ func TestDefaultESXIAdminCaddyRules(t *testing.T) {
 	assert.Contains(t, DefaultESXIAdminCaddyRules, "/api/v1/auth/gate?perm=esxi-admin:use")
 	// /ha-nfc NFC 端点：虚拟机导出/下载时 HEAD 测 size，必须代理
 	assert.Contains(t, DefaultESXIAdminCaddyRules, "handle /ha-nfc/*")
+	// /folder 数据存储端点：Host Client 上传/下载/目录浏览（PUT /folder/*?dcPath=..&dsName=..），
+	// 缺代理时上传"进度条跑完最终确认失败"；/nfc 为 OVF/OVA 导入导出 HttpNfcLease 端点
+	assert.Contains(t, DefaultESXIAdminCaddyRules, "handle /folder*")
+	assert.Contains(t, DefaultESXIAdminCaddyRules, "handle /nfc*")
 	// 版本迁移：新默认规则须与旧无鉴权版默认不同
 	assert.NotEqual(t, DefaultESXIAdminCaddyRules, DefaultESXIAdminCaddyRulesV1)
 	assert.NotContains(t, DefaultESXIAdminCaddyRulesV1, "forward_auth")
 	// 缺 /ha-nfc 的旧默认（V2）须与新默认不同
 	assert.NotEqual(t, DefaultESXIAdminCaddyRules, DefaultESXIAdminCaddyRulesV2)
 	assert.NotContains(t, DefaultESXIAdminCaddyRulesV2, "handle /ha-nfc/*")
+	// 缺 /folder /nfc 的旧默认（V3，即上一版默认）须与新默认不同
+	assert.NotEqual(t, DefaultESXIAdminCaddyRules, DefaultESXIAdminCaddyRulesV3)
+	assert.Contains(t, DefaultESXIAdminCaddyRulesV3, "handle /ha-nfc/*")
+	assert.NotContains(t, DefaultESXIAdminCaddyRulesV3, "handle /folder*")
+	assert.NotContains(t, DefaultESXIAdminCaddyRulesV3, "handle /nfc*")
 }

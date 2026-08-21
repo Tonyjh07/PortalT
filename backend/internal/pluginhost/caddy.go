@@ -292,7 +292,25 @@ handle /vsan/* {
 	}
 }`
 
-// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则（含 /ha-nfc）：
+// DefaultESXIAdminCaddyRulesV3 esxi-admin 插件缺 /folder /nfc 时的默认规则（历史值，带鉴权闸口）：
+// 已含 /ha-nfc 但缺 /folder*（数据存储浏览/上传）与 /nfc*（OVF/OVA 导入导出），
+// 仅用于 seed 迁移：识别旧默认（含 /ha-nfc 的形态）并升级为含 /folder* /nfc* 的新默认
+// （DefaultESXIAdminCaddyRules），归一化精确匹配才覆盖，保留管理员自定义。
+const DefaultESXIAdminCaddyRulesV3 = DefaultESXIAdminCaddyRulesV2 + `
+handle /ha-nfc/* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}`
+
+// DefaultESXIAdminCaddyRules esxi-admin 插件的默认 Caddy 规则（含 /ha-nfc + /folder + /nfc）：
 // ESXi Host Client 反代（/esxi/* 剥前缀 + /ui|/sdk 等绝对路径资源 + /ticket* WebSocket），
 // 作为该插件 CaddyRules 的默认值，管理员可在插件管理界面修改后重载。
 // 每个 handle 先经 forward_auth 回调门户鉴权闸口（/api/v1/auth/gate?perm=esxi-admin:use，
@@ -301,9 +319,27 @@ handle /vsan/* {
 // /ha-nfc/* 是 ESXi NFC（Network File Copy）端点：Host Client 虚拟机导出/拉取文件时
 // 对其发 HEAD 读取各文件 Content-Length（size）后再 GET 下载；该路径缺代理时会被门户
 // SPA 兜底命中（text/html），导出即报 "Required property not defined: size"。
+// /folder* 是 hostd 数据存储访问端点（GET 目录列表 / PUT 上传 / GET 下载，
+// URL 形如 /folder/<path>?dcPath=ha-datacenter&dsName=<datastore>，上传带 vmware-cgi-ticket
+// 头）：Host Client 数据存储浏览器上传文件走 PUT /folder/*，缺代理时请求落到门户 SPA
+// 兜底（返回非 ESXi 预期的 200/404），表现即"进度条跑完、最终确认失败"。
+// /nfc* 是 HttpNfcLease 端点（/nfc/<uuid>/<file>）：OVF/OVA 模板导入（vCenter 直连场景）
+// 与虚拟机磁盘级文件拉取走该路径，缺代理时导入/拉取失败。
 // 目标主机由 {env.ESXI_UPSTREAM} 在运行时解析（Caddy 进程环境变量）。
-const DefaultESXIAdminCaddyRules = DefaultESXIAdminCaddyRulesV2 + `
-handle /ha-nfc/* {
+const DefaultESXIAdminCaddyRules = DefaultESXIAdminCaddyRulesV3 + `
+handle /folder* {
+	forward_auth 127.0.0.1:8080 {
+		uri /api/v1/auth/gate?perm=esxi-admin:use
+	}
+	reverse_proxy {env.ESXI_UPSTREAM}:443 {
+		transport http {
+			tls
+			tls_insecure_skip_verify
+		}
+		header_down -Content-Security-Policy
+	}
+}
+handle /nfc* {
 	forward_auth 127.0.0.1:8080 {
 		uri /api/v1/auth/gate?perm=esxi-admin:use
 	}

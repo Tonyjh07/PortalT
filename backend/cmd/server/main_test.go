@@ -35,6 +35,7 @@ func TestSeedDefaultAccessPlugins_UpgradeHistoricDefaults(t *testing.T) {
 	}{
 		{"V1 无鉴权旧默认升级", pluginhost.DefaultESXIAdminCaddyRulesV1, true},
 		{"V2 缺 ha-nfc 旧默认升级", pluginhost.DefaultESXIAdminCaddyRulesV2, true},
+		{"V3 缺 folder/nfc 旧默认升级", pluginhost.DefaultESXIAdminCaddyRulesV3, true},
 		{"当前默认保持不变", pluginhost.DefaultESXIAdminCaddyRules, false},
 		{"管理员自定义不被覆盖", "handle /custom/* {\n\treverse_proxy 192.168.2.7:80\n}", false},
 	}
@@ -45,6 +46,8 @@ func TestSeedDefaultAccessPlugins_UpgradeHistoricDefaults(t *testing.T) {
 				require.Equal(t, pluginhost.DefaultESXIAdminCaddyRules, got.CaddyRules,
 					"旧默认应升级为当前默认")
 				require.Contains(t, got.CaddyRules, "handle /ha-nfc/*")
+				require.Contains(t, got.CaddyRules, "handle /folder*")
+				require.Contains(t, got.CaddyRules, "handle /nfc*")
 			} else {
 				require.Equal(t, tc.rules, got.CaddyRules, "非旧默认形态不应被覆盖")
 			}
